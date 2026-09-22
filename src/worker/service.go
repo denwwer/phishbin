@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/d1"
+	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/phishbin/src/config"
 	"github.com/phishbin/src/httpc"
 	"github.com/phishbin/src/provider"
@@ -53,11 +57,13 @@ func (s *Service) Run(ctx context.Context) {
 	}
 
 	if err := s.writeDiff(); err != nil {
-		slog.ErrorContext(ctx, "Failed to write diff.sql: %s", err)
+		slog.ErrorContext(ctx, "Failed to write diff file: %s", err)
 		return
 	}
 
-	s.d1Sync()
+	if err := s.d1Sync(ctx); err != nil {
+		slog.ErrorContext(ctx, "Failed to sync diff file with D1: %s", err)
+	}
 }
 
 // insert url to DB
@@ -142,10 +148,28 @@ func (s Service) writeDiff() error {
 }
 
 // import diff.sql to cloudflare D1 database and white status to db
-func (s Service) d1Sync() {
+func (s Service) d1Sync(ctx context.Context) error {
 	if !s.sync {
-		return
+		slog.WarnContext(ctx, "Sync is disabled")
+		return nil
 	}
 
-	panic("implement me")
+	diff, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "diff-0001.sql"))
+	if err != nil {
+		return err
+	}
+	if len(diff) == 0 {
+		return errors.New("diff is empty")
+	}
+
+	client := d1.NewD1Service(option.WithAPIToken(s.cfg.CFD1Token), option.WithMaxRetries(2), option.WithRequestTimeout(60*time.Second))
+
+	_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
+		AccountID: cloudflare.F(s.cfg.CFAccountID),
+		Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
+			Sql: cloudflare.F(string(diff)),
+		},
+	})
+
+	return err
 }
