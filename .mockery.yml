@@ -1,0 +1,16 @@
+all: false
+dir: '{{.InterfaceDir}}/testutil'
+filename: '{{.InterfaceName}}_mock.go'
+force-file-write: true
+formatter: goimports
+log-level: info
+structname: '{{.Mock}}{{.InterfaceName}}'
+pkgname: testutil
+recursive: true
+require-template-schema-exists: true
+template: testify
+template-schema: '{{.Template}}.schema.json'
+packages:
+  github.com/inboxbuffer/src:
+    config:
+      all: true

@@ -1,0 +1,53 @@
+version: "2"
+
+linters:
+  exclusions:
+    rules:
+      - path: "_test\\.go"
+        linters:
+          - gosec
+          - musttag
+          - unparam
+  enable:
+    - gosec
+    - bodyclose
+    - zerologlint
+    - perfsprint
+    - gocognit
+    - gocyclo
+
+    # bug catching
+    - errorlint
+    - nilerr
+    - sqlclosecheck
+    - fatcontext
+    - durationcheck
+    - copyloopvar
+    - gocheckcompilerdirectives
+    - iface
+
+    # consistency
+    - usestdlibvars
+    - recvcheck
+    - unconvert
+    - unparam
+    - musttag
+    - nolintlint
+    - dupl
+    - godot
+    - importas
+
+    # quality
+    - staticcheck
+    - gocritic
+    - mirror
+    - prealloc
+    - nakedret
+    - misspell
+    - bidichk
+
+formatters:
+  enable:
+    - goimports
+    - gofmt
+    - gci
