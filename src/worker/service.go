@@ -43,15 +43,12 @@ func (s *Service) Run(ctx context.Context) {
 
 	// TODO: use gorutine
 	for _, pd := range []provider.Provider{urlhaus.New(s.cfg.UrlhausKey)} {
-
 		fetchAt := time.Now()
-		err := pd.Fetch(ctx, httpc.New(), func(urlData string) {
+		fetchErr := pd.Fetch(ctx, httpc.New(), func(urlData string) {
 			s.insert(pd, urlData)
 		})
 
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to fetch provider %s: %s", pd.Name(), err)
-		}
+		s.writeFeedMeta(ctx, pd, fetchErr)
 
 		slog.InfoContext(ctx, fmt.Sprintf("%s took %s", pd.Name(), time.Since(fetchAt)))
 	}
@@ -70,6 +67,7 @@ func (s *Service) Run(ctx context.Context) {
 func (s Service) insert(pd provider.Provider, urlData string) {
 	u, err := url.Parse(urlData)
 	if err != nil || u.Hostname() == "" || u.Scheme != "https" {
+		slog.Error("Invalid URL", "provider", pd.Name(), "url", urlData, "error", err)
 		return
 	}
 
@@ -82,6 +80,34 @@ func (s Service) insert(pd provider.Provider, urlData string) {
 
 	if err != nil {
 		slog.Error("Failed to insert URL", "provider", pd.Name(), "url", urlData, "error", err)
+	}
+}
+
+func (s Service) writeFeedMeta(ctx context.Context, pd provider.Provider, fetchErr error) {
+	var count int
+
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM curr WHERE src & ? != 0`, pd.Bit()).Scan(&count)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to count provider URLs", "provider", pd.Name(), "error", err)
+		return
+	}
+
+	if fetchErr != nil {
+		slog.ErrorContext(ctx, "Failed to fetch provider", "provider", pd.Name(), "error", fetchErr)
+		_, err := s.db.Exec(`
+				INSERT INTO feed_meta (source, last_modified, last_error) VALUES (?, ?, ?)
+				ON CONFLICT(source) DO UPDATE SET last_error = excluded.last_error`, pd.Name(), time.Now().String(), fetchErr.Error())
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to update provider metadata", "provider", pd.Name(), "error", err)
+		}
+		return
+	}
+
+	_, err = s.db.Exec(`
+				INSERT INTO feed_meta (source, last_modified, last_count, last_error) VALUES (?, ?, ?, NULL)
+				ON CONFLICT(source) DO UPDATE SET last_count = excluded.last_count, last_error = NULL`, pd.Name(), time.Now().String(), count)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to update provider metadata", "provider", pd.Name(), "error", err)
 	}
 }
 
