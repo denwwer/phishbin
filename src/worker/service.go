@@ -2,9 +2,15 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/phishbin/src/config"
@@ -32,18 +38,18 @@ func (s *Service) Run(ctx context.Context) {
 	}()
 
 	// TODO: use gorutine
-	for _, p := range []provider.Provider{urlhaus.New(s.cfg.UrlhausKey)} {
+	for _, pd := range []provider.Provider{urlhaus.New(s.cfg.UrlhausKey)} {
 
 		fetchAt := time.Now()
-		err := p.Fetch(ctx, httpc.New(), func(urlData string) {
-			s.insert(p.Name(), urlData)
+		err := pd.Fetch(ctx, httpc.New(), func(urlData string) {
+			s.insert(pd, urlData)
 		})
 
 		if err != nil {
-			slog.ErrorContext(ctx, "Failed to fetch provider %s: %s", p.Name(), err)
+			slog.ErrorContext(ctx, "Failed to fetch provider %s: %s", pd.Name(), err)
 		}
 
-		slog.InfoContext(ctx, fmt.Sprintf("%s took %s", p.Name(), time.Since(fetchAt)))
+		slog.InfoContext(ctx, fmt.Sprintf("%s took %s", pd.Name(), time.Since(fetchAt)))
 	}
 
 	if err := s.writeDiff(); err != nil {
@@ -55,13 +61,84 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // insert url to DB
-func (s Service) insert(provider string, urlData string) {
-	panic("implement me")
+func (s Service) insert(pd provider.Provider, urlData string) {
+	u, err := url.Parse(urlData)
+	if err != nil || u.Hostname() == "" || u.Scheme != "https" {
+		return
+	}
+
+	hash := sha256.Sum256([]byte(urlData))
+	_, err = s.db.Exec(`
+		INSERT INTO curr (h, host, src)
+		VALUES (?, ?, ?)
+		ON CONFLICT(h) DO UPDATE SET src = curr.src | excluded.src`,
+		hash[:], strings.ToLower(u.Hostname()), pd.Bit())
+
+	if err != nil {
+		slog.Error("Failed to insert URL", "provider", pd.Name(), "url", urlData, "error", err)
+	}
 }
 
 // write difference of current list and new to Config.DataDir/diff.sql
 func (s Service) writeDiff() error {
-	panic("implement me")
+	file, err := os.Create(filepath.Join(s.cfg.DataDir, "diff-0001.sql"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	currRows, err := s.db.Query(`
+		SELECT h, host, src FROM curr
+		EXCEPT
+		SELECT h, host, src FROM prev`)
+
+	if err != nil {
+		return err
+	}
+	defer currRows.Close()
+
+	for currRows.Next() {
+		var hash []byte
+		var host string
+		var src uint32
+
+		if err := currRows.Scan(&hash, &host, &src); err != nil {
+			currRows.Close()
+			return err
+		}
+
+		if _, err := fmt.Fprintf(file, "INSERT OR REPLACE INTO bad_url(h, host, src) VALUES (X'%s', '%s', %d);\n", hex.EncodeToString(hash), strings.ReplaceAll(host, "'", "''"), src); err != nil {
+			currRows.Close()
+			return err
+		}
+	}
+
+	if err := currRows.Err(); err != nil {
+		return err
+	}
+
+	delRows, err := s.db.Query(`
+		SELECT h FROM prev
+		EXCEPT
+		SELECT h FROM curr`)
+
+	if err != nil {
+		return err
+	}
+	defer delRows.Close()
+
+	for delRows.Next() {
+		var hash []byte
+		if err := delRows.Scan(&hash); err != nil {
+			return err
+		}
+
+		if _, err := fmt.Fprintf(file, "DELETE FROM bad_url WHERE h = X'%s';\n", hex.EncodeToString(hash)); err != nil {
+			return err
+		}
+	}
+
+	return delRows.Err()
 }
 
 // import diff.sql to cloudflare D1 database and white status to db

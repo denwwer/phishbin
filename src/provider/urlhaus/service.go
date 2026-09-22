@@ -1,4 +1,5 @@
 // Download Plain-Text URL List (URLs only) for past 30 days.
+// https://urlhaus.abuse.ch/api/#plain-text
 
 package urlhaus
 
@@ -24,16 +25,15 @@ func New(authKey string) provider.Provider {
 }
 
 func (s service) Name() string {
-	return "urlhaus"
+	return "URLhaus"
 }
 
 func (s service) Bit() uint32 {
-	//TODO implement me
-	panic("implement me")
+	return 1
 }
 
 func (s service) Fetch(ctx context.Context, c *httpc.Client, emit func(urlData string)) error {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf(dataURL, s.authKey), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(dataURL, s.authKey), nil)
 	if err != nil {
 		return err
 	}
