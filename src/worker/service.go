@@ -60,6 +60,11 @@ func (s *Service) Run(ctx context.Context) {
 
 	if err := s.d1Sync(ctx); err != nil {
 		slog.ErrorContext(ctx, "Failed to sync diff file with D1: %s", err)
+		return
+	}
+
+	if err := s.rotate(); err != nil {
+		slog.ErrorContext(ctx, "Failed to rotate local state: %s", err)
 	}
 }
 
@@ -246,4 +251,37 @@ func (s Service) d1Sync(ctx context.Context) error {
 	})
 
 	return err
+}
+
+// Rotates the local database schema by swapping current and previous tables.
+func (s Service) rotate() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DROP TABLE prev`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`ALTER TABLE curr RENAME TO prev`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		CREATE TABLE curr (
+			h BLOB PRIMARY KEY,
+			host TEXT NOT NULL,
+			src INTEGER NOT NULL,
+			reasons TEXT NOT NULL DEFAULT 'malware'
+		) WITHOUT ROWID`); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return os.Remove(filepath.Join(s.cfg.DataDir, "diff-0001.sql"))
 }
