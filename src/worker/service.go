@@ -188,12 +188,60 @@ func (s Service) d1Sync(ctx context.Context) error {
 		return errors.New("diff is empty")
 	}
 
+	startedAt := time.Now()
 	client := d1.NewD1Service(option.WithAPIToken(s.cfg.CFD1Token), option.WithMaxRetries(2), option.WithRequestTimeout(60*time.Second))
 
 	_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
 		AccountID: cloudflare.F(s.cfg.CFAccountID),
 		Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
 			Sql: cloudflare.F(string(diff)),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	var rows, added, deleted int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM curr`).Scan(&rows); err != nil {
+		return err
+	}
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM (
+			SELECT h, host, src FROM curr
+			EXCEPT
+			SELECT h, host, src FROM prev
+		)`).Scan(&added); err != nil {
+		return err
+	}
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM (
+			SELECT h FROM prev
+			EXCEPT
+			SELECT h FROM curr
+		)`).Scan(&deleted); err != nil {
+		return err
+	}
+
+	var sourcesOK, sourcesFailed sql.NullString
+	if err := s.db.QueryRow(`
+		SELECT group_concat(CASE WHEN last_error IS NULL THEN source END),
+		       group_concat(CASE WHEN last_error IS NOT NULL THEN source END)
+		FROM feed_meta`).Scan(&sourcesOK, &sourcesFailed); err != nil {
+		return err
+	}
+
+	statusSQL := fmt.Sprintf(`
+		INSERT OR REPLACE INTO sync_status
+		(id, finished_at, rows, added, deleted, sources_ok, sources_failed, duration_ms)
+		VALUES (1, %d, %d, %d, %d, '%s', '%s', %d);`,
+		time.Now().Unix(), rows, added, deleted,
+		strings.ReplaceAll(sourcesOK.String, "'", "''"),
+		strings.ReplaceAll(sourcesFailed.String, "'", "''"), time.Since(startedAt).Milliseconds())
+
+	_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
+		AccountID: cloudflare.F(s.cfg.CFAccountID),
+		Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
+			Sql: cloudflare.F(statusSQL),
 		},
 	})
 
