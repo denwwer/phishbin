@@ -215,6 +215,7 @@ func (s Service) d1Sync(ctx context.Context) error {
 	startedAt := time.Now()
 	client := d1.NewD1Service(option.WithAPIToken(s.cfg.CFD1Token), option.WithMaxRetries(2), option.WithRequestTimeout(30*time.Second))
 
+	// write feeds
 	for _, chunk := range chunks {
 		diff, err := os.ReadFile(chunk)
 		if err != nil {
@@ -234,6 +235,7 @@ func (s Service) d1Sync(ctx context.Context) error {
 		}
 	}
 
+	// write status
 	var rows int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM curr`).Scan(&rows); err != nil {
 		return err

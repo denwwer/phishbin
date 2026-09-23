@@ -40,10 +40,12 @@ func Connect(conf *config.Config) (*sql.DB, error) {
 	}
 
 	if err = client.Ping(); err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 
 	if err = migrationsUp(); err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 

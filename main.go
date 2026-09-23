@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/im-kulikov/gonfig"
@@ -43,11 +46,14 @@ func main() {
 	}
 	defer dbClient.Close()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	w := worker.New(conf, dbClient, false)
 
 	if conf.Time == "0" {
 		slog.Warn("One-time execution")
-		w.Run(context.Background())
+		w.Run(ctx)
 		return
 	}
 
@@ -58,11 +64,14 @@ func main() {
 		ticker := time.NewTicker(runDur)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			w.Run(context.Background())
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				w.Run(ctx)
+			}
 		}
-
-		return
 	}
 
 	parsedTime, timeErr := time.Parse(runLayout, conf.Time)
@@ -82,9 +91,14 @@ func main() {
 	slog.Info(fmt.Sprintf("Scheduled daily at %s", conf.Time))
 	for {
 		timer := time.NewTimer(time.Until(runTime))
-		<-timer.C
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 
-		w.Run(context.Background())
+		w.Run(ctx)
 		runTime = runTime.AddDate(0, 0, 1)
 	}
 }
