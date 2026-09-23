@@ -9,13 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
-	"github.com/cloudflare/cloudflare-go/v7"
-	"github.com/cloudflare/cloudflare-go/v7/d1"
-	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/phishbin/src/config"
 	"github.com/phishbin/src/httpc"
 	"github.com/phishbin/src/provider"
@@ -86,9 +81,9 @@ func (s Service) insert(pd provider.Provider, urlData string) error {
 
 	hash := normalize.Hash(pattern)
 	_, err = s.db.Exec(`
-		INSERT INTO curr (h, src)
+		INSERT INTO curr (h, pId)
 		VALUES (?, ?)
-		ON CONFLICT(h) DO UPDATE SET src = curr.src | excluded.src`,
+		ON CONFLICT(h) DO UPDATE SET pId = curr.pId | excluded.pId`,
 		hash[:], pd.Bit())
 
 	if err != nil {
@@ -101,7 +96,7 @@ func (s Service) insert(pd provider.Provider, urlData string) error {
 func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, lastError error) {
 	var count int
 
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM curr WHERE src & ? != 0`, pd.Bit()).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM curr WHERE pId & ? != 0`, pd.Bit()).Scan(&count)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to count provider URLs", "provider", pd.Name(), "error", err)
 		return
@@ -113,8 +108,8 @@ func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, las
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO feed_history (provider, fetchAt, records, last_error) VALUES (?, ?, ?, ?)`,
-		pd.Name(), time.Now().Format(time.RFC3339), count, errMsg)
+		INSERT INTO feed_history (provider, pId, fetchAt, records, last_error) VALUES (?, ?, ?, ?, ?)`,
+		pd.Name(), pd.Bit(), time.Now().Format(time.RFC3339), count, errMsg)
 
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to update feed history", "provider", pd.Name(), "error", err)
@@ -138,8 +133,8 @@ func (s Service) writeDiff() error {
 	}
 	defer closeChunk()
 
-	writeStatement := func(h []byte, src uint32) error {
-		qInsert := fmt.Sprintf("INSERT OR REPLACE INTO abuse_feeds(h, src) VALUES (X'%s', %d);\n", hex.EncodeToString(h), src)
+	writeStatement := func(h []byte, pId uint32) error {
+		qInsert := fmt.Sprintf("INSERT OR REPLACE INTO abuse_feeds(h, pId) VALUES (X'%s', %d);\n", hex.EncodeToString(h), pId)
 
 		if file == nil || chunkSize+len(qInsert) > maxChunkSize {
 			closeChunk()
@@ -161,9 +156,9 @@ func (s Service) writeDiff() error {
 	}
 
 	currRows, err := s.db.Query(`
-		SELECT h, src FROM curr
+		SELECT h, pId FROM curr
 		EXCEPT
-		SELECT h, src FROM prev`)
+		SELECT h, pId FROM prev`)
 
 	if err != nil {
 		return err
@@ -175,95 +170,24 @@ func (s Service) writeDiff() error {
 	for currRows.Next() {
 		rowsDiff++
 		var hash []byte
-		var src uint32
+		var pId uint32
 
-		if err := currRows.Scan(&hash, &src); err != nil {
+		if err := currRows.Scan(&hash, &pId); err != nil {
 			return err
 		}
 
-		if err := writeStatement(hash, src); err != nil {
+		if err := writeStatement(hash, pId); err != nil {
 			return err
 		}
 	}
 
 	if rowsDiff == 0 {
-		slog.Info("No diff rows")
+		slog.Info(fmt.Sprintf("No diff rows, chunks %d", chunk))
 	} else if chunk > 0 {
 		slog.Info(fmt.Sprintf("Diff rows %d, chunks %d", rowsDiff, chunk))
 	}
 
 	return currRows.Err()
-}
-
-// import diff.sql to cloudflare D1 database and white status to db
-func (s Service) d1Sync(ctx context.Context) error {
-	if !s.sync {
-		slog.WarnContext(ctx, "Sync is disabled")
-		return nil
-	}
-
-	chunks, err := filepath.Glob(filepath.Join(s.cfg.DataDir, "diff", "chunk-*.sql"))
-	if err != nil {
-		return err
-	}
-
-	sort.Strings(chunks)
-	if len(chunks) == 0 {
-		return errors.New("diff is empty")
-	}
-
-	startedAt := time.Now()
-	client := d1.NewD1Service(option.WithAPIToken(s.cfg.CFD1Token), option.WithMaxRetries(2), option.WithRequestTimeout(30*time.Second))
-
-	// write feeds
-	for _, chunk := range chunks {
-		diff, err := os.ReadFile(chunk)
-		if err != nil {
-			return err
-		}
-		if len(diff) == 0 {
-			return fmt.Errorf("diff is empty: %s", chunk)
-		}
-		_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
-			AccountID: cloudflare.F(s.cfg.CFAccountID),
-			Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
-				Sql: cloudflare.F(string(diff)),
-			},
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	// write status
-	var rows int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM curr`).Scan(&rows); err != nil {
-		return err
-	}
-
-	var sourcesFailed sql.NullString
-	if err := s.db.QueryRow(`
-		SELECT group_concat(last_error)
-		FROM feed_history
-		WHERE last_error IS NOT NULL`).Scan(&sourcesFailed); err != nil {
-		return err
-	}
-
-	statusSQL := fmt.Sprintf(`
-		INSERT OR REPLACE INTO abuse_feeds_status
-		(id, lastSyncAt, rows, providersFailed, durationMs)
-		VALUES (1, %d, %d, '%s', %d);`,
-		time.Now().Unix(), rows,
-		strings.ReplaceAll(sourcesFailed.String, "'", "''"), time.Since(startedAt).Milliseconds())
-
-	_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
-		AccountID: cloudflare.F(s.cfg.CFAccountID),
-		Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
-			Sql: cloudflare.F(statusSQL),
-		},
-	})
-
-	return err
 }
 
 // Rotates the local database schema by swapping current and previous tables.
@@ -285,7 +209,7 @@ func (s Service) rotate() error {
 	if _, err := tx.Exec(`
 		CREATE TABLE curr (
 			h BLOB PRIMARY KEY,
-			src INTEGER NOT NULL,
+			pId INTEGER NOT NULL,
 			reasons TEXT NOT NULL DEFAULT 'malware'
 		) WITHOUT ROWID`); err != nil {
 		return err

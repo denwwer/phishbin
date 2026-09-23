@@ -1,18 +1,20 @@
 CREATE TABLE prev (
     h BLOB PRIMARY KEY,
-    src INTEGER NOT NULL,
+    pId INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT 'malware'
 ) WITHOUT ROWID;
 
+-- sync changes with src/worker/service.go Service.rotate()
 CREATE TABLE curr (
     h BLOB PRIMARY KEY,
-    src INTEGER NOT NULL,
+    pId INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT 'malware'
 ) WITHOUT ROWID;
 
 CREATE TABLE feed_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT,
+    pId INTEGER NOT NULL,
     fetchAt TEXT,
     records INTEGER,
     last_error TEXT

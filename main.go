@@ -49,7 +49,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	w := worker.New(conf, dbClient, false)
+	w := worker.New(conf, dbClient, true)
 
 	if conf.Time == "0" {
 		slog.Warn("One-time execution")
