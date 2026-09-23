@@ -23,6 +23,8 @@ docker:
 # Run tests
 test:
 	@go test -race -v ./...
+	@cd worker && npm test
+
 
 # Run linter
 lint:

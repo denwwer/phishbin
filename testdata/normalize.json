@@ -1,0 +1,592 @@
+{
+  "_note": "null means the URL must be rejected by both implementations",
+  "canonical": [
+    {
+      "in": "HTTP://Evil.COM:8080/a/./b/../c?x=1#frag",
+      "out": "evil.com/a/c?x=1"
+    },
+    {
+      "in": "https://evil.com",
+      "out": "evil.com/"
+    },
+    {
+      "in": "https://evil.com/",
+      "out": "evil.com/"
+    },
+    {
+      "in": "evil.com/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "http://EVIL.com/UPPER",
+      "out": "evil.com/UPPER"
+    },
+    {
+      "in": "http://evil.com:443/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "http://evil.com:80/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "https://user:pw@evil.com./login.php?",
+      "out": "evil.com/login.php"
+    },
+    {
+      "in": "http://user@evil.com/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "http://evil.com/#frag",
+      "out": "evil.com/"
+    },
+    {
+      "in": "http://evil.com/?",
+      "out": "evil.com/"
+    },
+    {
+      "in": "   http://evil.com/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "https://evil.com//x//y/",
+      "out": "evil.com/x/y/"
+    },
+    {
+      "in": "http://evil.com/./././",
+      "out": "evil.com/"
+    },
+    {
+      "in": "http://evil.com/a/../../b",
+      "out": "evil.com/b"
+    },
+    {
+      "in": "http://evil.com/%2e%2e/a",
+      "out": "evil.com/a"
+    },
+    {
+      "in": "http://evil.com/..%2f..%2fetc/passwd",
+      "out": "evil.com/etc/passwd"
+    },
+    {
+      "in": "http://EVIL.COM./A//B/../C/./?Q=%41%2f%3f",
+      "out": "evil.com/A/C/?Q=A/?"
+    },
+    {
+      "in": "https://evil.com/a%2520b",
+      "out": "evil.com/a%20b"
+    },
+    {
+      "in": "http://evil.com/a%2520%2525b",
+      "out": "evil.com/a%20%25b"
+    },
+    {
+      "in": "http://evil.com/a%3Fb",
+      "out": "evil.com/a%3fb"
+    },
+    {
+      "in": "http://evil.com/a b",
+      "out": "evil.com/a%20b"
+    },
+    {
+      "in": "http://evil.com/%%%",
+      "out": "evil.com/%25%25%25"
+    },
+    {
+      "in": "http://evil.com/%7euser/",
+      "out": "evil.com/~user/"
+    },
+    {
+      "in": "http://evil.com/x?y=%2520",
+      "out": "evil.com/x?y=%20"
+    },
+    {
+      "in": "http://evil.co.uk/path%20with%20space/?a=b%26c",
+      "out": "evil.co.uk/path%20with%20space/?a=b&c"
+    },
+    {
+      "in": "http://evil.com/%E4%B8%AD%E6%96%87",
+      "out": "evil.com/%e4%b8%ad%e6%96%87"
+    },
+    {
+      "in": "https://xn--bcher-kva.example/%c3%bc/x",
+      "out": "xn--bcher-kva.example/%c3%bc/x"
+    },
+    {
+      "in": "http://evil.com/a?b=1?2",
+      "out": "evil.com/a?b=1?2"
+    },
+    {
+      "in": "http://evil.com/a/b/c/d/e/f?x=1&y=2",
+      "out": "evil.com/a/b/c/d/e/f?x=1&y=2"
+    },
+    {
+      "in": "http://tricky.com/a?b=c#d?e",
+      "out": "tricky.com/a?b=c"
+    },
+    {
+      "in": "https://xn--bcher-kva.example/x",
+      "out": "xn--bcher-kva.example/x"
+    },
+    {
+      "in": "http://a..b.com/x",
+      "out": "a.b.com/x"
+    },
+    {
+      "in": "http://sub_domain.evil.com/x",
+      "out": "sub_domain.evil.com/x"
+    },
+    {
+      "in": "http://ex-ample.com/x",
+      "out": "ex-ample.com/x"
+    },
+    {
+      "in": "http://xn--fsq.com/x",
+      "out": "xn--fsq.com/x"
+    },
+    {
+      "in": "http://a.b.c/1/2.html?param=1/2",
+      "out": "a.b.c/1/2.html?param=1/2"
+    },
+    {
+      "in": "http://a.b.c.d.e/p1/p2/p3/p4/p5/p6",
+      "out": "a.b.c.d.e/p1/p2/p3/p4/p5/p6"
+    },
+    {
+      "in": "http://a.b.c.d.e.f.g.h.i.evil.com/x",
+      "out": "a.b.c.d.e.f.g.h.i.evil.com/x"
+    },
+    {
+      "in": "https://a.b.evil.com/x/y/z/w/login.php?t=1",
+      "out": "a.b.evil.com/x/y/z/w/login.php?t=1"
+    },
+    {
+      "in": "https://1.2.3.4/x",
+      "out": null
+    },
+    {
+      "in": "https://[2001:db8::1]/x",
+      "out": null
+    },
+    {
+      "in": "http://0x7f000001/",
+      "out": null
+    },
+    {
+      "in": "http://127.1/x",
+      "out": null
+    },
+    {
+      "in": "ftp://evil.com/x",
+      "out": null
+    },
+    {
+      "in": "http://localhost/x",
+      "out": null
+    },
+    {
+      "in": "javascript:alert(1)",
+      "out": null
+    },
+    {
+      "in": "http://evil.com/x\\y",
+      "out": "evil.com/x/y"
+    },
+    {
+      "in": "http://evil.com/a\\b\\c",
+      "out": "evil.com/a/b/c"
+    },
+    {
+      "in": "http://evil.com/a;b,c=d",
+      "out": "evil.com/a;b,c=d"
+    },
+    {
+      "in": "http://evil.com/!$&'()*+,;=:@/x",
+      "out": "evil.com/!$&'()*+,;=:@/x"
+    }
+  ],
+  "candidates": [
+    {
+      "in": "HTTP://Evil.COM:8080/a/./b/../c?x=1#frag",
+      "out": [
+        "evil.com/",
+        "evil.com/a/",
+        "evil.com/a/c",
+        "evil.com/a/c?x=1"
+      ]
+    },
+    {
+      "in": "https://evil.com",
+      "out": [
+        "evil.com/"
+      ]
+    },
+    {
+      "in": "https://evil.com/",
+      "out": [
+        "evil.com/"
+      ]
+    },
+    {
+      "in": "evil.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "http://EVIL.com/UPPER",
+      "out": [
+        "evil.com/",
+        "evil.com/UPPER"
+      ]
+    },
+    {
+      "in": "http://evil.com:443/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "http://evil.com:80/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "https://user:pw@evil.com./login.php?",
+      "out": [
+        "evil.com/",
+        "evil.com/login.php"
+      ]
+    },
+    {
+      "in": "http://user@evil.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "http://evil.com/#frag",
+      "out": [
+        "evil.com/"
+      ]
+    },
+    {
+      "in": "http://evil.com/?",
+      "out": [
+        "evil.com/"
+      ]
+    },
+    {
+      "in": "   http://evil.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "https://evil.com//x//y/",
+      "out": [
+        "evil.com/",
+        "evil.com/x/",
+        "evil.com/x/y/"
+      ]
+    },
+    {
+      "in": "http://evil.com/./././",
+      "out": [
+        "evil.com/"
+      ]
+    },
+    {
+      "in": "http://evil.com/a/../../b",
+      "out": [
+        "evil.com/",
+        "evil.com/b"
+      ]
+    },
+    {
+      "in": "http://evil.com/%2e%2e/a",
+      "out": [
+        "evil.com/",
+        "evil.com/a"
+      ]
+    },
+    {
+      "in": "http://evil.com/..%2f..%2fetc/passwd",
+      "out": [
+        "evil.com/",
+        "evil.com/etc/",
+        "evil.com/etc/passwd"
+      ]
+    },
+    {
+      "in": "http://EVIL.COM./A//B/../C/./?Q=%41%2f%3f",
+      "out": [
+        "evil.com/",
+        "evil.com/A/",
+        "evil.com/A/C/",
+        "evil.com/A/C/?Q=A/?"
+      ]
+    },
+    {
+      "in": "https://evil.com/a%2520b",
+      "out": [
+        "evil.com/",
+        "evil.com/a%20b"
+      ]
+    },
+    {
+      "in": "http://evil.com/a%2520%2525b",
+      "out": [
+        "evil.com/",
+        "evil.com/a%20%25b"
+      ]
+    },
+    {
+      "in": "http://evil.com/a%3Fb",
+      "out": [
+        "evil.com/",
+        "evil.com/a%3fb"
+      ]
+    },
+    {
+      "in": "http://evil.com/a b",
+      "out": [
+        "evil.com/",
+        "evil.com/a%20b"
+      ]
+    },
+    {
+      "in": "http://evil.com/%%%",
+      "out": [
+        "evil.com/",
+        "evil.com/%25%25%25"
+      ]
+    },
+    {
+      "in": "http://evil.com/%7euser/",
+      "out": [
+        "evil.com/",
+        "evil.com/~user/"
+      ]
+    },
+    {
+      "in": "http://evil.com/x?y=%2520",
+      "out": [
+        "evil.com/",
+        "evil.com/x",
+        "evil.com/x?y=%20"
+      ]
+    },
+    {
+      "in": "http://evil.co.uk/path%20with%20space/?a=b%26c",
+      "out": [
+        "co.uk/",
+        "co.uk/path%20with%20space/",
+        "co.uk/path%20with%20space/?a=b&c",
+        "evil.co.uk/",
+        "evil.co.uk/path%20with%20space/",
+        "evil.co.uk/path%20with%20space/?a=b&c"
+      ]
+    },
+    {
+      "in": "http://evil.com/%E4%B8%AD%E6%96%87",
+      "out": [
+        "evil.com/",
+        "evil.com/%e4%b8%ad%e6%96%87"
+      ]
+    },
+    {
+      "in": "https://xn--bcher-kva.example/%c3%bc/x",
+      "out": [
+        "xn--bcher-kva.example/",
+        "xn--bcher-kva.example/%c3%bc/",
+        "xn--bcher-kva.example/%c3%bc/x"
+      ]
+    },
+    {
+      "in": "http://evil.com/a?b=1?2",
+      "out": [
+        "evil.com/",
+        "evil.com/a",
+        "evil.com/a?b=1?2"
+      ]
+    },
+    {
+      "in": "http://evil.com/a/b/c/d/e/f?x=1&y=2",
+      "out": [
+        "evil.com/",
+        "evil.com/a/",
+        "evil.com/a/b/",
+        "evil.com/a/b/c/",
+        "evil.com/a/b/c/d/e/f",
+        "evil.com/a/b/c/d/e/f?x=1&y=2"
+      ]
+    },
+    {
+      "in": "http://tricky.com/a?b=c#d?e",
+      "out": [
+        "tricky.com/",
+        "tricky.com/a",
+        "tricky.com/a?b=c"
+      ]
+    },
+    {
+      "in": "https://xn--bcher-kva.example/x",
+      "out": [
+        "xn--bcher-kva.example/",
+        "xn--bcher-kva.example/x"
+      ]
+    },
+    {
+      "in": "http://a..b.com/x",
+      "out": [
+        "a.b.com/",
+        "a.b.com/x",
+        "b.com/",
+        "b.com/x"
+      ]
+    },
+    {
+      "in": "http://sub_domain.evil.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x",
+        "sub_domain.evil.com/",
+        "sub_domain.evil.com/x"
+      ]
+    },
+    {
+      "in": "http://ex-ample.com/x",
+      "out": [
+        "ex-ample.com/",
+        "ex-ample.com/x"
+      ]
+    },
+    {
+      "in": "http://xn--fsq.com/x",
+      "out": [
+        "xn--fsq.com/",
+        "xn--fsq.com/x"
+      ]
+    },
+    {
+      "in": "http://a.b.c/1/2.html?param=1/2",
+      "out": [
+        "a.b.c/",
+        "a.b.c/1/",
+        "a.b.c/1/2.html",
+        "a.b.c/1/2.html?param=1/2",
+        "b.c/",
+        "b.c/1/",
+        "b.c/1/2.html",
+        "b.c/1/2.html?param=1/2"
+      ]
+    },
+    {
+      "in": "http://a.b.c.d.e/p1/p2/p3/p4/p5/p6",
+      "out": [
+        "a.b.c.d.e/",
+        "a.b.c.d.e/p1/",
+        "a.b.c.d.e/p1/p2/",
+        "a.b.c.d.e/p1/p2/p3/",
+        "a.b.c.d.e/p1/p2/p3/p4/p5/p6",
+        "b.c.d.e/",
+        "b.c.d.e/p1/",
+        "b.c.d.e/p1/p2/",
+        "b.c.d.e/p1/p2/p3/",
+        "b.c.d.e/p1/p2/p3/p4/p5/p6",
+        "c.d.e/",
+        "c.d.e/p1/",
+        "c.d.e/p1/p2/",
+        "c.d.e/p1/p2/p3/",
+        "c.d.e/p1/p2/p3/p4/p5/p6",
+        "d.e/",
+        "d.e/p1/",
+        "d.e/p1/p2/",
+        "d.e/p1/p2/p3/",
+        "d.e/p1/p2/p3/p4/p5/p6"
+      ]
+    },
+    {
+      "in": "http://a.b.c.d.e.f.g.h.i.evil.com/x",
+      "out": [
+        "a.b.c.d.e.f.g.h.i.evil.com/",
+        "a.b.c.d.e.f.g.h.i.evil.com/x",
+        "e.f.g.h.i.evil.com/",
+        "e.f.g.h.i.evil.com/x",
+        "evil.com/",
+        "evil.com/x",
+        "f.g.h.i.evil.com/",
+        "f.g.h.i.evil.com/x",
+        "g.h.i.evil.com/",
+        "g.h.i.evil.com/x",
+        "h.i.evil.com/",
+        "h.i.evil.com/x",
+        "i.evil.com/",
+        "i.evil.com/x"
+      ]
+    },
+    {
+      "in": "https://a.b.evil.com/x/y/z/w/login.php?t=1",
+      "out": [
+        "a.b.evil.com/",
+        "a.b.evil.com/x/",
+        "a.b.evil.com/x/y/",
+        "a.b.evil.com/x/y/z/",
+        "a.b.evil.com/x/y/z/w/login.php",
+        "a.b.evil.com/x/y/z/w/login.php?t=1",
+        "b.evil.com/",
+        "b.evil.com/x/",
+        "b.evil.com/x/y/",
+        "b.evil.com/x/y/z/",
+        "b.evil.com/x/y/z/w/login.php",
+        "b.evil.com/x/y/z/w/login.php?t=1",
+        "evil.com/",
+        "evil.com/x/",
+        "evil.com/x/y/",
+        "evil.com/x/y/z/",
+        "evil.com/x/y/z/w/login.php",
+        "evil.com/x/y/z/w/login.php?t=1"
+      ]
+    },
+    {
+      "in": "http://evil.com/x\\y",
+      "out": [
+        "evil.com/",
+        "evil.com/x/",
+        "evil.com/x/y"
+      ]
+    },
+    {
+      "in": "http://evil.com/a\\b\\c",
+      "out": [
+        "evil.com/",
+        "evil.com/a/",
+        "evil.com/a/b/",
+        "evil.com/a/b/c"
+      ]
+    },
+    {
+      "in": "http://evil.com/a;b,c=d",
+      "out": [
+        "evil.com/",
+        "evil.com/a;b,c=d"
+      ]
+    },
+    {
+      "in": "http://evil.com/!$&'()*+,;=:@/x",
+      "out": [
+        "evil.com/",
+        "evil.com/!$&'()*+,;=:@/",
+        "evil.com/!$&'()*+,;=:@/x"
+      ]
+    }
+  ]
+}

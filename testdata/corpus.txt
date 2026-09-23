@@ -1,0 +1,70 @@
+# Input corpus for the shared canonicalization fixtures.
+# Add a line here, run `go run ./cmd/genfixtures`, review the diff in
+# testdata/normalize.json, then run both test suites.
+# Blank lines and lines starting with '#' are ignored. Leading/trailing
+# whitespace is part of the input, so quote-free lines are used as-is.
+
+# basics
+HTTP://Evil.COM:8080/a/./b/../c?x=1#frag
+https://evil.com
+https://evil.com/
+evil.com/x
+http://EVIL.com/UPPER
+http://evil.com:443/x
+http://evil.com:80/x
+https://user:pw@evil.com./login.php?
+http://user@evil.com/x
+http://evil.com/#frag
+http://evil.com/?
+   http://evil.com/x
+
+# path cleaning
+https://evil.com//x//y/
+http://evil.com/./././
+http://evil.com/a/../../b
+http://evil.com/%2e%2e/a
+http://evil.com/..%2f..%2fetc/passwd
+http://EVIL.COM./A//B/../C/./?Q=%41%2f%3f
+
+# percent-encoding
+https://evil.com/a%2520b
+http://evil.com/a%2520%2525b
+http://evil.com/a%3Fb
+http://evil.com/a b
+http://evil.com/%%%
+http://evil.com/%7euser/
+http://evil.com/x?y=%2520
+http://evil.co.uk/path%20with%20space/?a=b%26c
+http://evil.com/%E4%B8%AD%E6%96%87
+https://xn--bcher-kva.example/%c3%bc/x
+
+# query
+http://evil.com/a?b=1?2
+http://evil.com/a/b/c/d/e/f?x=1&y=2
+http://tricky.com/a?b=c#d?e
+
+# host forms
+https://xn--bcher-kva.example/x
+http://a..b.com/x
+http://sub_domain.evil.com/x
+http://ex-ample.com/x
+http://xn--fsq.com/x
+http://a.b.c/1/2.html?param=1/2
+http://a.b.c.d.e/p1/p2/p3/p4/p5/p6
+http://a.b.c.d.e.f.g.h.i.evil.com/x
+https://a.b.evil.com/x/y/z/w/login.php?t=1
+
+# rejected
+https://1.2.3.4/x
+https://[2001:db8::1]/x
+http://0x7f000001/
+http://127.1/x
+ftp://evil.com/x
+http://localhost/x
+javascript:alert(1)
+
+# misc
+http://evil.com/x\y
+http://evil.com/a\b\c
+http://evil.com/a;b,c=d
+http://evil.com/!$&'()*+,;=:@/x

@@ -54,17 +54,17 @@ func (s *Service) Run(ctx context.Context) {
 	}
 
 	if err := s.writeDiff(); err != nil {
-		slog.ErrorContext(ctx, "Failed to write diff file: %s", err)
+		slog.ErrorContext(ctx, "Failed to write diff file", "error", err)
 		return
 	}
 
 	if err := s.d1Sync(ctx); err != nil {
-		slog.ErrorContext(ctx, "Failed to sync diff file with D1: %s", err)
+		slog.ErrorContext(ctx, "Failed to sync diff file with D1", "error", err)
 		return
 	}
 
 	if err := s.rotate(); err != nil {
-		slog.ErrorContext(ctx, "Failed to rotate local state: %s", err)
+		slog.ErrorContext(ctx, "Failed to rotate local state", "error", err)
 	}
 }
 

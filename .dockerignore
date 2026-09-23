@@ -1,5 +1,6 @@
 docs
 testdata
+/worker
 
 # Go workspace file
 go.work
