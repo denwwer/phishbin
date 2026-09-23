@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,9 @@ import (
 	"github.com/phishbin/src/provider/urlhaus"
 	"github.com/phishbin/src/worker/normalize"
 )
+
+// Max chunk size for splitting SQL diff statements into separate files.
+const maxChunkSize = 90 * 1024
 
 type Service struct {
 	cfg  *config.Config
@@ -44,10 +48,12 @@ func (s *Service) Run(ctx context.Context) {
 
 		var insertErr error
 		fetchErr := pd.Fetch(ctx, httpc.New(), func(urlData string) {
-			insertErr = s.insert(pd, urlData)
+			if err := s.insert(pd, urlData); err != nil {
+				insertErr = err
+			}
 		})
 
-		s.writeFeedMeta(ctx, pd, errors.Join(fetchErr, insertErr))
+		s.writeFeedHistory(ctx, pd, errors.Join(fetchErr, insertErr))
 
 		slog.InfoContext(ctx, fmt.Sprintf("%s took %s", pd.Name(), time.Since(fetchAt)))
 	}
@@ -88,7 +94,7 @@ func (s Service) insert(pd provider.Provider, urlData string) error {
 	return err
 }
 
-func (s Service) writeFeedMeta(ctx context.Context, pd provider.Provider, withError error) {
+func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, lastError error) {
 	var count int
 
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM curr WHERE src & ? != 0`, pd.Bit()).Scan(&count)
@@ -97,32 +103,53 @@ func (s Service) writeFeedMeta(ctx context.Context, pd provider.Provider, withEr
 		return
 	}
 
-	if withError != nil {
-		slog.ErrorContext(ctx, "Failed to fetch provider", "provider", pd.Name(), "error", withError)
-		_, err := s.db.Exec(`
-				INSERT INTO feed_meta (source, last_modified, last_error) VALUES (?, ?, ?)
-				ON CONFLICT(source) DO UPDATE SET last_error = excluded.last_error`, pd.Name(), time.Now().String(), withError.Error())
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to update provider metadata", "provider", pd.Name(), "error", err)
-		}
-		return
-	}
-
 	_, err = s.db.Exec(`
-				INSERT INTO feed_meta (source, last_modified, last_count, last_error) VALUES (?, ?, ?, NULL)
-				ON CONFLICT(source) DO UPDATE SET last_count = excluded.last_count, last_error = NULL`, pd.Name(), time.Now().String(), count)
+		INSERT INTO feed_history (provider, fetchAt, last_countrecords, last_error) VALUES (?, ?, ?, ?)`,
+		pd.Name(), time.Now().String(), count, lastError)
+
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to update provider metadata", "provider", pd.Name(), "error", err)
+		slog.ErrorContext(ctx, "Failed to update feed history", "provider", pd.Name(), "error", err)
 	}
 }
 
-// write difference of current list and new to Config.DataDir/diff.sql
+// write difference of current list and new to Config.DataDir/diff/chunk-*.sql
 func (s Service) writeDiff() error {
-	file, err := os.Create(filepath.Join(s.cfg.DataDir, "diff-0001.sql"))
-	if err != nil {
-		return err
+	diffPath := filepath.Join(s.cfg.DataDir, "diff")
+	os.RemoveAll(diffPath)
+	os.MkdirAll(diffPath, 0755)
+
+	var file *os.File
+	var chunkSize int
+	var chunk int
+
+	closeChunk := func() {
+		if file != nil {
+			_ = file.Close()
+		}
 	}
-	defer file.Close()
+	defer closeChunk()
+
+	writeStatement := func(h []byte, src uint32) error {
+		qInsert := fmt.Sprintf("INSERT OR REPLACE INTO abuse_feeds(h, src) VALUES (X'%s', %d);\n", hex.EncodeToString(h), src)
+
+		if file == nil || chunkSize+len(qInsert) > maxChunkSize {
+			closeChunk()
+			chunk++
+
+			var err error
+			file, err = os.Create(filepath.Join(diffPath, fmt.Sprintf("chunk-%04d.sql", chunk)))
+			if err != nil {
+				return err
+			}
+			chunkSize = 0
+		}
+		if _, err := file.WriteString(qInsert); err != nil {
+			return err
+		}
+
+		chunkSize += len(qInsert)
+		return nil
+	}
 
 	currRows, err := s.db.Query(`
 		SELECT h, src FROM curr
@@ -139,42 +166,15 @@ func (s Service) writeDiff() error {
 		var src uint32
 
 		if err := currRows.Scan(&hash, &src); err != nil {
-			currRows.Close()
 			return err
 		}
 
-		if _, err := fmt.Fprintf(file, "INSERT OR REPLACE INTO abuse_feeds(h, src) VALUES (X'%s', %d);\n", hex.EncodeToString(hash), src); err != nil {
-			currRows.Close()
-			return err
-		}
-	}
-
-	if err := currRows.Err(); err != nil {
-		return err
-	}
-
-	delRows, err := s.db.Query(`
-		SELECT h FROM prev
-		EXCEPT
-		SELECT h FROM curr`)
-
-	if err != nil {
-		return err
-	}
-	defer delRows.Close()
-
-	for delRows.Next() {
-		var hash []byte
-		if err := delRows.Scan(&hash); err != nil {
-			return err
-		}
-
-		if _, err := fmt.Fprintf(file, "DELETE FROM bad_url WHERE h = X'%s';\n", hex.EncodeToString(hash)); err != nil {
+		if err := writeStatement(hash, src); err != nil {
 			return err
 		}
 	}
 
-	return delRows.Err()
+	return currRows.Err()
 }
 
 // import diff.sql to cloudflare D1 database and white status to db
@@ -184,25 +184,36 @@ func (s Service) d1Sync(ctx context.Context) error {
 		return nil
 	}
 
-	diff, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "diff-0001.sql"))
+	chunks, err := filepath.Glob(filepath.Join(s.cfg.DataDir, "diff", "chunk-*.sql"))
 	if err != nil {
 		return err
 	}
-	if len(diff) == 0 {
+
+	sort.Strings(chunks)
+	if len(chunks) == 0 {
 		return errors.New("diff is empty")
 	}
 
 	startedAt := time.Now()
-	client := d1.NewD1Service(option.WithAPIToken(s.cfg.CFD1Token), option.WithMaxRetries(2), option.WithRequestTimeout(60*time.Second))
+	client := d1.NewD1Service(option.WithAPIToken(s.cfg.CFD1Token), option.WithMaxRetries(2), option.WithRequestTimeout(30*time.Second))
 
-	_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
-		AccountID: cloudflare.F(s.cfg.CFAccountID),
-		Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
-			Sql: cloudflare.F(string(diff)),
-		},
-	})
-	if err != nil {
-		return err
+	for _, chunk := range chunks {
+		diff, err := os.ReadFile(chunk)
+		if err != nil {
+			return err
+		}
+		if len(diff) == 0 {
+			return fmt.Errorf("diff is empty: %s", chunk)
+		}
+		_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{
+			AccountID: cloudflare.F(s.cfg.CFAccountID),
+			Body: d1.DatabaseQueryParamsBodyD1SingleQuery{
+				Sql: cloudflare.F(string(diff)),
+			},
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	var rows, added, deleted int
@@ -281,5 +292,5 @@ func (s Service) rotate() error {
 		return err
 	}
 
-	return os.Remove(filepath.Join(s.cfg.DataDir, "diff-0001.sql"))
+	return os.RemoveAll(filepath.Join(s.cfg.DataDir, "diff"))
 }

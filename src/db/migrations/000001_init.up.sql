@@ -10,11 +10,10 @@ CREATE TABLE curr (
     reasons TEXT NOT NULL DEFAULT 'malware'
 ) WITHOUT ROWID;
 
-CREATE TABLE feed_meta (
-    source TEXT PRIMARY KEY,
-    etag TEXT,
-    last_modified TEXT,
-    last_count INTEGER,
+CREATE TABLE feed_history (
+    provider TEXT PRIMARY KEY,
+    fetchAt TEXT,
+    records INTEGER,
     last_error TEXT
 );
 

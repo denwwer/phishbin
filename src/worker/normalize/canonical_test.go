@@ -22,7 +22,7 @@ type fixtures struct {
 
 func load(t *testing.T) fixtures {
 	t.Helper()
-	b, err := os.ReadFile("../../testdata/normalize.json")
+	b, err := os.ReadFile("../../../testdata/normalize.json")
 	if err != nil {
 		t.Fatal(err)
 	}
