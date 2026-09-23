@@ -24,7 +24,7 @@ import (
 )
 
 // Max chunk size for splitting SQL diff statements into separate files.
-const maxChunkSize = 90 * 1024
+const maxChunkSize = 90 * 1024 // keep 90 KB
 
 type Service struct {
 	cfg  *config.Config
@@ -36,11 +36,14 @@ func New(cfg *config.Config, db *sql.DB, sync bool) *Service {
 	return &Service{cfg: cfg, db: db, sync: sync}
 }
 
+// Run executes worker loop, fetching, inserting, and sync providers data with D1.
 func (s *Service) Run(ctx context.Context) {
 	slog.InfoContext(ctx, "Worker started")
 
 	startAt := time.Now()
-	defer slog.InfoContext(ctx, fmt.Sprintf("Worker took %s", time.Since(startAt)))
+	defer func() {
+		slog.InfoContext(ctx, fmt.Sprintf("Worker took %s", time.Since(startAt)))
+	}()
 
 	// TODO: use gorutine
 	for _, pd := range []provider.Provider{urlhaus.New(s.cfg.UrlhausKey)} {
@@ -94,6 +97,7 @@ func (s Service) insert(pd provider.Provider, urlData string) error {
 	return err
 }
 
+// WriteFeedHistory save the current URL's count and last error for a provider.
 func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, lastError error) {
 	var count int
 
@@ -103,9 +107,14 @@ func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, las
 		return
 	}
 
+	var errMsg any
+	if lastError != nil {
+		errMsg = lastError.Error()
+	}
+
 	_, err = s.db.Exec(`
-		INSERT INTO feed_history (provider, fetchAt, last_countrecords, last_error) VALUES (?, ?, ?, ?)`,
-		pd.Name(), time.Now().String(), count, lastError)
+		INSERT INTO feed_history (provider, fetchAt, records, last_error) VALUES (?, ?, ?, ?)`,
+		pd.Name(), time.Now().Format(time.RFC3339), count, errMsg)
 
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to update feed history", "provider", pd.Name(), "error", err)
@@ -161,7 +170,10 @@ func (s Service) writeDiff() error {
 	}
 	defer currRows.Close()
 
+	var rowsDiff int
+
 	for currRows.Next() {
+		rowsDiff++
 		var hash []byte
 		var src uint32
 
@@ -172,6 +184,12 @@ func (s Service) writeDiff() error {
 		if err := writeStatement(hash, src); err != nil {
 			return err
 		}
+	}
+
+	if rowsDiff == 0 {
+		slog.Info("No diff rows")
+	} else if chunk > 0 {
+		slog.Info(fmt.Sprintf("Diff rows %d, chunks %d", rowsDiff, chunk))
 	}
 
 	return currRows.Err()
@@ -216,41 +234,24 @@ func (s Service) d1Sync(ctx context.Context) error {
 		}
 	}
 
-	var rows, added, deleted int
+	var rows int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM curr`).Scan(&rows); err != nil {
 		return err
 	}
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM (
-			SELECT h, src FROM curr
-			EXCEPT
-			SELECT h, src FROM prev
-		)`).Scan(&added); err != nil {
-		return err
-	}
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM (
-			SELECT h FROM prev
-			EXCEPT
-			SELECT h FROM curr
-		)`).Scan(&deleted); err != nil {
-		return err
-	}
 
-	var sourcesOK, sourcesFailed sql.NullString
+	var sourcesFailed sql.NullString
 	if err := s.db.QueryRow(`
-		SELECT group_concat(CASE WHEN last_error IS NULL THEN source END),
-		       group_concat(CASE WHEN last_error IS NOT NULL THEN source END)
-		FROM feed_meta`).Scan(&sourcesOK, &sourcesFailed); err != nil {
+		SELECT group_concat(last_error)
+		FROM feed_history
+		WHERE last_error IS NOT NULL`).Scan(&sourcesFailed); err != nil {
 		return err
 	}
 
 	statusSQL := fmt.Sprintf(`
 		INSERT OR REPLACE INTO abuse_feeds_status
-		(id, lastSyncAt, rows, added, deleted, sourcesOk, sourcesFailed, durationMs)
-		VALUES (1, %d, %d, %d, %d, '%s', '%s', %d);`,
-		time.Now().Unix(), rows, added, deleted,
-		strings.ReplaceAll(sourcesOK.String, "'", "''"),
+		(id, lastSyncAt, rows, providersFailed, durationMs)
+		VALUES (1, %d, %d, '%s', %d);`,
+		time.Now().Unix(), rows,
 		strings.ReplaceAll(sourcesFailed.String, "'", "''"), time.Since(startedAt).Milliseconds())
 
 	_, err = client.Database.Query(ctx, s.cfg.CFDatabase, d1.DatabaseQueryParams{

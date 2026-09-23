@@ -49,7 +49,7 @@ func (s service) Fetch(ctx context.Context, c *httpc.Client, emit func(urlData s
 
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || line[0] == '#' {
+		if line == "" || line[0] == '#' || provider.IsIPURL(line) {
 			continue
 		}
 

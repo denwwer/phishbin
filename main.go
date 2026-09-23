@@ -16,16 +16,24 @@ const runLayout = "15:04" // hh:mm
 
 func main() {
 	// parse env's
-	var conf *config.Config
+	conf := &config.Config{}
 	if err := gonfig.Load(conf); err != nil {
 		fmt.Println(gonfig.UsageOfEnvs(conf))
 		return
 	}
 
 	runDur, err := time.ParseDuration(conf.Time)
-	if err == nil && runDur <= 0 {
-		slog.Error("Duration must be greater than zero")
-		return
+	if err == nil {
+		if runDur < 0 {
+			slog.Error("Duration must be greater than zero")
+			return
+		}
+
+		// TODO: is 30 min?
+		if runDur > 0 && runDur < 30*time.Minute {
+			slog.Error("Duration must be greater than or equal to 30 minutes")
+			return
+		}
 	}
 
 	dbClient, err := db.Connect(conf)
@@ -33,11 +41,20 @@ func main() {
 		slog.Error("Failed to connect to database", "err", err)
 		return
 	}
+	defer dbClient.Close()
 
 	w := worker.New(conf, dbClient, false)
 
+	if conf.Time == "0" {
+		slog.Warn("One-time execution")
+		w.Run(context.Background())
+		return
+	}
+
 	// periodic interval
 	if err == nil {
+		slog.Info(fmt.Sprintf("Scheduled every %s", runDur))
+
 		ticker := time.NewTicker(runDur)
 		defer ticker.Stop()
 
@@ -51,7 +68,7 @@ func main() {
 	parsedTime, timeErr := time.Parse(runLayout, conf.Time)
 	if timeErr != nil {
 		slog.Error("Invalid run time", "value", conf.Time, "error", timeErr)
-		fmt.Println(gonfig.UsageOfEnvs(&conf))
+		fmt.Println(gonfig.UsageOfEnvs(conf))
 		return
 	}
 
@@ -62,6 +79,7 @@ func main() {
 	}
 
 	// daily schedule
+	slog.Info(fmt.Sprintf("Scheduled daily at %s", conf.Time))
 	for {
 		timer := time.NewTimer(time.Until(runTime))
 		<-timer.C

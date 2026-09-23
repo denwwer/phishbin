@@ -18,11 +18,8 @@ type Client struct {
 // New creates a new HTTP client with retries.
 func New() *Client {
 	cl := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:    10,
-			IdleConnTimeout: 30 * time.Second,
-		},
-		Timeout: time.Second * 60,
+		Transport: &Transport{Dir: "./tmp/cache"}, // cache
+		Timeout:   time.Second * 60,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return http.ErrUseLastResponse

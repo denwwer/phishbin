@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -28,6 +29,10 @@ const SQLiteConstraintUnique = "2067"
 
 func Connect(conf *config.Config) (*sql.DB, error) {
 	var err error
+
+	if info, err := os.Stat(conf.DataDir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("data directory %s not exists", conf.DataDir)
+	}
 
 	client, err = sql.Open("sqlite", dsn(conf.DataDir))
 	if err != nil {
