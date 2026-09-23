@@ -31,9 +31,9 @@ var (
 	possibleIPRegexp    = regexp.MustCompile(`^(?i)((?:0x[0-9a-f]+|[0-9\.])+)$`)
 	trailingSpaceRegexp = regexp.MustCompile(`^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) `)
 
-	// schemeRegexp matches only an explicit "scheme://" prefix, so that
+	// schemeRegexp captures an explicit "scheme://" prefix, so that
 	// "evil.com:8080/x" is treated as schemeless rather than as scheme "evil.com".
-	schemeRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
+	schemeRegexp = regexp.MustCompile(`^([a-zA-Z][a-zA-Z0-9+.-]*)://`)
 
 	// hostRegexp must match HOST_RE in canonical.ts. It requires at least two
 	// labels and a TLD starting with a letter, so numeric hosts never pass.
@@ -105,7 +105,11 @@ func Candidates(p Parts) []string {
 // "https://evil.com/x". The shortener's https-only rule is user-input policy and
 // lives in parseUserUrl() in the Worker, not here.
 func Parse(raw string) (Parts, error) {
-	u, err := url.Parse(preprocess(raw))
+	pre, ok := preprocess(raw)
+	if !ok {
+		return Parts{}, ErrInvalid
+	}
+	u, err := url.Parse(pre)
 	if err != nil {
 		return Parts{}, ErrInvalid
 	}
@@ -135,8 +139,9 @@ func Parse(raw string) (Parts, error) {
 }
 
 // preprocess mirrors what the WHATWG parser does before parsing, so that
-// net/url sees the same string the Worker's `new URL()` sees.
-func preprocess(raw string) string {
+// net/url sees the same string the Worker's `new URL()` sees. ok is false when
+// the WHATWG host parser would have thrown.
+func preprocess(raw string) (string, bool) {
 	if i := strings.IndexByte(raw, '#'); i >= 0 { // drop the fragment
 		raw = raw[:i]
 	}
@@ -144,10 +149,60 @@ func preprocess(raw string) string {
 	raw = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(raw)
 	raw = strings.ReplaceAll(raw, `\`, "/") // special schemes treat \ as /
 	raw = escapeLonePercent(raw)            // net/url rejects "%zz"; WHATWG encodes it
-	if !schemeRegexp.MatchString(raw) {
+
+	m := schemeRegexp.FindStringSubmatch(raw)
+	if m == nil {
 		raw = "http://" + raw // some feeds ship bare "evil.com/x"
+	} else if s := strings.ToLower(m[1]); s == "ftps" || s == "sftp" {
+		// ftps and sftp carry a host and path like https does, and the scheme is
+		// not part of the pattern, so rewriting is lossless. It is also required:
+		// the WHATWG parser treats them as non-special schemes and would hand the
+		// Worker an opaque host — not lowercased, not percent-decoded, no IDNA.
+		raw = "https://" + raw[len(m[0]):]
 	}
-	return raw
+
+	return decodeAuthority(raw)
+}
+
+// forbiddenHostBytes are the WHATWG forbidden host code points. '%' is included
+// because the host is decoded exactly once, so a surviving '%' is invalid.
+const forbiddenHostBytes = "\x00\t\n\r #%/:<>?@[\\]^|"
+
+// decodeAuthority percent-decodes the authority once and reports whether every
+// decoded byte is allowed in a host, which is what the WHATWG host parser does.
+// net/url instead rejects any escape in the host at all ("invalid URL escape"),
+// so without this Go would drop "https://ev%69l.com/x" while the Worker resolved
+// it to evil.com — the blocklist would miss an entry the lookup side canonicalizes.
+func decodeAuthority(raw string) (string, bool) {
+	m := schemeRegexp.FindStringSubmatch(raw)
+	if m == nil {
+		return raw, true
+	}
+	start := len(m[0])
+	end := len(raw)
+	if i := strings.IndexAny(raw[start:], "/?#"); i >= 0 {
+		end = start + i
+	}
+	auth := raw[start:end]
+	if !strings.Contains(auth, "%") {
+		return raw, true
+	}
+
+	var b strings.Builder
+	b.Grow(len(auth))
+	for i := 0; i < len(auth); i++ {
+		if auth[i] == '%' && i+2 < len(auth) && isHex(auth[i+1]) && isHex(auth[i+2]) {
+			c := unhex(auth[i+1])<<4 | unhex(auth[i+2])
+			if strings.IndexByte(forbiddenHostBytes, c) >= 0 {
+				return "", false
+			}
+			b.WriteByte(c)
+			i += 2
+			continue
+		}
+		b.WriteByte(auth[i])
+	}
+	return raw[:start] + b.String() + raw[end:], true
 }
 
 // escapeLonePercent replaces a '%' that does not start a valid escape with
@@ -166,8 +221,9 @@ func escapeLonePercent(s string) string {
 	return b.String()
 }
 
+// canonHost takes the host after preprocess/decodeAuthority has already done the
+// single percent-decoding pass, exactly as WHATWG hands one to the Worker.
 func canonHost(h string) (string, error) {
-	h = unescape(h) // WHATWG percent-decodes the host before IDNA
 	if isUnicode(h) {
 		a, err := idn.ToASCII(h)
 		if err != nil {

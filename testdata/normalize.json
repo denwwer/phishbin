@@ -204,6 +204,74 @@
     {
       "in": "http://evil.com/!$&'()*+,;=:@/x",
       "out": "evil.com/!$&'()*+,;=:@/x"
+    },
+    {
+      "in": "sftp://Evil.COM:22/a/./b/../c?x=1#frag",
+      "out": "evil.com/a/c?x=1"
+    },
+    {
+      "in": "ftps://Evil.COM/a%2Fb",
+      "out": "evil.com/a/b"
+    },
+    {
+      "in": "sftp://ev%69l.com/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "sftp://user@Bücher.example/x",
+      "out": "xn--bcher-kva.example/x"
+    },
+    {
+      "in": "sftp://evil.com/x\\y",
+      "out": "evil.com/x/y"
+    },
+    {
+      "in": "SFTP://evil.com/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "ftps://1.2.3.4/x",
+      "out": null
+    },
+    {
+      "in": "https://ev%69l.com/x",
+      "out": "evil.com/x"
+    },
+    {
+      "in": "https://ev%2Eil.com/",
+      "out": "ev.il.com/"
+    },
+    {
+      "in": "https://ev%C3%BCl.com/",
+      "out": "xn--evl-ioa.com/"
+    },
+    {
+      "in": "https://ev%3Ail.com/",
+      "out": null
+    },
+    {
+      "in": "https://ev%40il.com/",
+      "out": null
+    },
+    {
+      "in": "https://ev%20il.com/",
+      "out": null
+    },
+    {
+      "in": "https://evil.com%2Fx/y",
+      "out": null
+    },
+    {
+      "in": "https://ev%2569l.com/",
+      "out": null
+    },
+    {
+      "in": "https://ev%25il.com/",
+      "out": null
+    },
+    {
+      "in": "https://ev%zzil.com/",
+      "out": null
     }
   ],
   "candidates": [
@@ -586,6 +654,72 @@
         "evil.com/",
         "evil.com/!$&'()*+,;=:@/",
         "evil.com/!$&'()*+,;=:@/x"
+      ]
+    },
+    {
+      "in": "sftp://Evil.COM:22/a/./b/../c?x=1#frag",
+      "out": [
+        "evil.com/",
+        "evil.com/a/",
+        "evil.com/a/c",
+        "evil.com/a/c?x=1"
+      ]
+    },
+    {
+      "in": "ftps://Evil.COM/a%2Fb",
+      "out": [
+        "evil.com/",
+        "evil.com/a/",
+        "evil.com/a/b"
+      ]
+    },
+    {
+      "in": "sftp://ev%69l.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "sftp://user@Bücher.example/x",
+      "out": [
+        "xn--bcher-kva.example/",
+        "xn--bcher-kva.example/x"
+      ]
+    },
+    {
+      "in": "sftp://evil.com/x\\y",
+      "out": [
+        "evil.com/",
+        "evil.com/x/",
+        "evil.com/x/y"
+      ]
+    },
+    {
+      "in": "SFTP://evil.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "https://ev%69l.com/x",
+      "out": [
+        "evil.com/",
+        "evil.com/x"
+      ]
+    },
+    {
+      "in": "https://ev%2Eil.com/",
+      "out": [
+        "ev.il.com/",
+        "il.com/"
+      ]
+    },
+    {
+      "in": "https://ev%C3%BCl.com/",
+      "out": [
+        "xn--evl-ioa.com/"
       ]
     }
   ]

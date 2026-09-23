@@ -46,9 +46,10 @@ func (s service) Fetch(ctx context.Context, c *httpc.Client, emit func(urlData s
 
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 64*1024), 1<<20) // long URLs
+
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || line[0] == '#' || strings.HasPrefix(line, "http:") || provider.IsIPURL(line) {
+		if line == "" || line[0] == '#' {
 			continue
 		}
 

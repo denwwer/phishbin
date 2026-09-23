@@ -68,3 +68,26 @@ http://evil.com/x\y
 http://evil.com/a\b\c
 http://evil.com/a;b,c=d
 http://evil.com/!$&'()*+,;=:@/x
+
+# ftps / sftp are rewritten to https before parsing: non-special schemes get an
+# opaque host from the WHATWG parser (no lowercasing, no IDNA, no %-decoding)
+sftp://Evil.COM:22/a/./b/../c?x=1#frag
+ftps://Evil.COM/a%2Fb
+sftp://ev%69l.com/x
+sftp://user@Bücher.example/x
+sftp://evil.com/x\y
+SFTP://evil.com/x
+ftps://1.2.3.4/x
+
+# percent-escaped hosts: WHATWG decodes once and rejects forbidden code points,
+# net/url rejects every escape, so Go reproduces the WHATWG rule explicitly
+https://ev%69l.com/x
+https://ev%2Eil.com/
+https://ev%C3%BCl.com/
+https://ev%3Ail.com/
+https://ev%40il.com/
+https://ev%20il.com/
+https://evil.com%2Fx/y
+https://ev%2569l.com/
+https://ev%25il.com/
+https://ev%zzil.com/

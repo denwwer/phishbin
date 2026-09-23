@@ -2,13 +2,11 @@ package worker
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +19,7 @@ import (
 	"github.com/phishbin/src/httpc"
 	"github.com/phishbin/src/provider"
 	"github.com/phishbin/src/provider/urlhaus"
+	"github.com/phishbin/src/worker/normalize"
 )
 
 type Service struct {
@@ -37,18 +36,18 @@ func (s *Service) Run(ctx context.Context) {
 	slog.InfoContext(ctx, "Worker started")
 
 	startAt := time.Now()
-	defer func() {
-		slog.InfoContext(ctx, fmt.Sprintf("Worker took %s", time.Since(startAt)))
-	}()
+	defer slog.InfoContext(ctx, fmt.Sprintf("Worker took %s", time.Since(startAt)))
 
 	// TODO: use gorutine
 	for _, pd := range []provider.Provider{urlhaus.New(s.cfg.UrlhausKey)} {
 		fetchAt := time.Now()
+
+		var insertErr error
 		fetchErr := pd.Fetch(ctx, httpc.New(), func(urlData string) {
-			s.insert(pd, urlData)
+			insertErr = s.insert(pd, urlData)
 		})
 
-		s.writeFeedMeta(ctx, pd, fetchErr)
+		s.writeFeedMeta(ctx, pd, errors.Join(fetchErr, insertErr))
 
 		slog.InfoContext(ctx, fmt.Sprintf("%s took %s", pd.Name(), time.Since(fetchAt)))
 	}
@@ -69,26 +68,27 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // insert url to DB
-func (s Service) insert(pd provider.Provider, urlData string) {
-	u, err := url.Parse(urlData)
-	if err != nil || u.Hostname() == "" || u.Scheme != "https" {
+func (s Service) insert(pd provider.Provider, urlData string) error {
+	pattern, err := normalize.Canonical(urlData)
+	if err != nil {
 		slog.Error("Invalid URL", "provider", pd.Name(), "url", urlData, "error", err)
-		return
+		return err
 	}
 
-	hash := sha256.Sum256([]byte(urlData))
+	hash := normalize.Hash(pattern)
 	_, err = s.db.Exec(`
-		INSERT INTO curr (h, host, src)
-		VALUES (?, ?, ?)
+		INSERT INTO curr (h, src)
+		VALUES (?, ?)
 		ON CONFLICT(h) DO UPDATE SET src = curr.src | excluded.src`,
-		hash[:], strings.ToLower(u.Hostname()), pd.Bit())
+		hash[:], pd.Bit())
 
 	if err != nil {
 		slog.Error("Failed to insert URL", "provider", pd.Name(), "url", urlData, "error", err)
 	}
+	return err
 }
 
-func (s Service) writeFeedMeta(ctx context.Context, pd provider.Provider, fetchErr error) {
+func (s Service) writeFeedMeta(ctx context.Context, pd provider.Provider, withError error) {
 	var count int
 
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM curr WHERE src & ? != 0`, pd.Bit()).Scan(&count)
@@ -97,11 +97,11 @@ func (s Service) writeFeedMeta(ctx context.Context, pd provider.Provider, fetchE
 		return
 	}
 
-	if fetchErr != nil {
-		slog.ErrorContext(ctx, "Failed to fetch provider", "provider", pd.Name(), "error", fetchErr)
+	if withError != nil {
+		slog.ErrorContext(ctx, "Failed to fetch provider", "provider", pd.Name(), "error", withError)
 		_, err := s.db.Exec(`
 				INSERT INTO feed_meta (source, last_modified, last_error) VALUES (?, ?, ?)
-				ON CONFLICT(source) DO UPDATE SET last_error = excluded.last_error`, pd.Name(), time.Now().String(), fetchErr.Error())
+				ON CONFLICT(source) DO UPDATE SET last_error = excluded.last_error`, pd.Name(), time.Now().String(), withError.Error())
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to update provider metadata", "provider", pd.Name(), "error", err)
 		}
@@ -125,9 +125,9 @@ func (s Service) writeDiff() error {
 	defer file.Close()
 
 	currRows, err := s.db.Query(`
-		SELECT h, host, src FROM curr
+		SELECT h, src FROM curr
 		EXCEPT
-		SELECT h, host, src FROM prev`)
+		SELECT h, src FROM prev`)
 
 	if err != nil {
 		return err
@@ -136,15 +136,14 @@ func (s Service) writeDiff() error {
 
 	for currRows.Next() {
 		var hash []byte
-		var host string
 		var src uint32
 
-		if err := currRows.Scan(&hash, &host, &src); err != nil {
+		if err := currRows.Scan(&hash, &src); err != nil {
 			currRows.Close()
 			return err
 		}
 
-		if _, err := fmt.Fprintf(file, "INSERT OR REPLACE INTO bad_url(h, host, src) VALUES (X'%s', '%s', %d);\n", hex.EncodeToString(hash), strings.ReplaceAll(host, "'", "''"), src); err != nil {
+		if _, err := fmt.Fprintf(file, "INSERT OR REPLACE INTO abuse_feeds(h, src) VALUES (X'%s', %d);\n", hex.EncodeToString(hash), src); err != nil {
 			currRows.Close()
 			return err
 		}
@@ -212,9 +211,9 @@ func (s Service) d1Sync(ctx context.Context) error {
 	}
 	if err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM (
-			SELECT h, host, src FROM curr
+			SELECT h, src FROM curr
 			EXCEPT
-			SELECT h, host, src FROM prev
+			SELECT h, src FROM prev
 		)`).Scan(&added); err != nil {
 		return err
 	}
@@ -236,8 +235,8 @@ func (s Service) d1Sync(ctx context.Context) error {
 	}
 
 	statusSQL := fmt.Sprintf(`
-		INSERT OR REPLACE INTO sync_status
-		(id, finished_at, rows, added, deleted, sources_ok, sources_failed, duration_ms)
+		INSERT OR REPLACE INTO abuse_feeds_status
+		(id, lastSyncAt, rows, added, deleted, sourcesOk, sourcesFailed, durationMs)
 		VALUES (1, %d, %d, %d, %d, '%s', '%s', %d);`,
 		time.Now().Unix(), rows, added, deleted,
 		strings.ReplaceAll(sourcesOK.String, "'", "''"),
@@ -272,7 +271,6 @@ func (s Service) rotate() error {
 	if _, err := tx.Exec(`
 		CREATE TABLE curr (
 			h BLOB PRIMARY KEY,
-			host TEXT NOT NULL,
 			src INTEGER NOT NULL,
 			reasons TEXT NOT NULL DEFAULT 'malware'
 		) WITHOUT ROWID`); err != nil {

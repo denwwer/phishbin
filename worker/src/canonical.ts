@@ -9,7 +9,6 @@ import {
   generateLookupPaths,
   parseIPAddress,
   recursiveUnescape,
-  unescape,
 } from './sb_urls';
 
 export type UrlErrorCode = 'invalid_host' | 'ip_not_allowed';
@@ -23,8 +22,8 @@ export class InvalidUrlError extends Error {
 /** Must match hostRegexp in canonical.go. */
 const HOST_RE = /^(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{0,62}$/;
 
-/** Only an explicit "scheme://" counts, so "evil.com:8080/x" stays schemeless. */
-const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+/** Captures an explicit "scheme://", so "evil.com:8080/x" stays schemeless. */
+const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;
 
 export interface Parts {
   host: string;  // lowercase, punycode, no trailing dot
@@ -38,11 +37,13 @@ export function pattern(p: Parts): string {
 }
 
 /**
- * Canonicalize, accepting http and https alike. Twin of Parse() in canonical.go.
+ * Canonicalize. Twin of Parse() in canonical.go, and the only entry point —
+ * scheme and host policy is enforced by the submit endpoint on the user side and
+ * by skipping unusable lines on the feed side.
  *
  * The scheme is dropped from the pattern, so a feed entry "http://evil.com/x"
- * matches a submitted "https://evil.com/x". Rejecting http is the submit
- * endpoint's job, not this function's.
+ * matches a submitted "https://evil.com/x", and an sftp link matches a pattern
+ * stored from a web URL on the same host.
  */
 export function parse(raw: string): Parts {
   let u: URL;
@@ -100,7 +101,16 @@ function preprocess(raw: string): string {
       .replace(/[\t\r\n]/g, '')
       .replace(/\\/g, '/'), // special schemes treat \ as /
   );
-  return SCHEME_RE.test(raw) ? raw : 'http://' + raw; // feeds ship bare "evil.com/x"
+
+  const m = SCHEME_RE.exec(raw);
+  if (m === null) return 'http://' + raw; // some feeds ship bare "evil.com/x"
+
+  // ftps and sftp carry a host and path like https does, and the scheme is not
+  // part of the pattern, so rewriting is lossless. It is also required: they are
+  // non-special schemes, so the WHATWG parser would give them an opaque host —
+  // not lowercased, not percent-decoded, no IDNA — that never matches a pattern.
+  const scheme = m[1].toLowerCase();
+  return scheme === 'ftps' || scheme === 'sftp' ? 'https://' + raw.slice(m[0].length) : raw;
 }
 
 /**
@@ -123,9 +133,13 @@ function isHexChar(c: string): boolean {
   return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
-/** WHATWG has already lowercased the host and applied IDNA (Go uses x/net/idna). */
+/**
+ * WHATWG has already lowercased the host, percent-decoded it once, applied IDNA
+ * and thrown on forbidden host code points. Go reproduces all of that in
+ * preprocess/decodeAuthority, because net/url rejects escapes in the host.
+ */
 function canonHost(h: string): string {
-  h = unescape(h).replace(/[.]+/g, '.').replace(/^\.+|\.+$/g, '').toLowerCase();
+  h = h.replace(/[.]+/g, '.').replace(/^\.+|\.+$/g, '').toLowerCase();
 
   if (parseIPAddress(h) !== '') throw new InvalidUrlError('ip_not_allowed');
   if (!HOST_RE.test(h)) throw new InvalidUrlError('invalid_host');
