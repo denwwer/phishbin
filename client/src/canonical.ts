@@ -20,7 +20,7 @@ export class InvalidUrlError extends Error {
 }
 
 /** Must match hostRegexp in canonical.go. */
-const HOST_RE = /^(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{0,62}$/;
+const HOST_RE = /^(?:[a-z0-9_-]{1,63}\.)+[a-z][a-z0-9-]{0,62}$/;
 
 /** Captures an explicit "scheme://", so "evil.com:8080/x" stays schemeless. */
 const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;

@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 )
 
-type Transport struct {
+// TransportCache provides a file-based HTTP caching layer for HTTP clients.
+// Cached responses are stored in a Config.CacheDir directory.
+type TransportCache struct {
 	Base http.RoundTripper
 	Dir  string
 }
 
-func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t *TransportCache) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.Base
 	if base == nil {
 		base = http.DefaultTransport
@@ -26,7 +28,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	data, err := os.ReadFile(key)
 	if err == nil {
-		slog.Warn("cache hit", slog.String("host", req.URL.Host))
+		slog.Warn("cache hit", "host", req.URL.Host)
 		return cachedResponse(req, data), nil
 	}
 

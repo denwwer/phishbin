@@ -16,9 +16,9 @@ type Client struct {
 }
 
 // New creates a new HTTP client with retries.
-func New() *Client {
+func New(cacheDir string) *Client {
 	cl := &http.Client{
-		Transport: &Transport{Dir: "./tmp/cache"}, // cache
+		Transport: http.DefaultTransport,
 		Timeout:   time.Second * 60,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
@@ -26,6 +26,10 @@ func New() *Client {
 			}
 			return nil
 		},
+	}
+
+	if cacheDir != "" {
+		cl.Transport = &TransportCache{Dir: cacheDir}
 	}
 
 	return &Client{cl: cl}

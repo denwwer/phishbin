@@ -9,11 +9,18 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/phishbin/src/config"
+	"github.com/phishbin/src/db"
 	"github.com/phishbin/src/httpc"
 	"github.com/phishbin/src/provider"
+	"github.com/phishbin/src/provider/openphish"
+	"github.com/phishbin/src/provider/phishingdb"
+	"github.com/phishbin/src/provider/phishtank"
+	"github.com/phishbin/src/provider/tweetfeed"
 	"github.com/phishbin/src/provider/urlhaus"
 	"github.com/phishbin/src/worker/normalize"
 )
@@ -22,13 +29,14 @@ import (
 const maxChunkSize = 90 * 1024 // keep 90 KB
 
 type Service struct {
-	cfg  *config.Config
-	db   *sql.DB
-	sync bool // sync diff data with D1
+	conf  *config.Config
+	db    *sql.DB
+	sync  bool // sync diff data with D1
+	jobID string
 }
 
-func New(cfg *config.Config, db *sql.DB, sync bool) *Service {
-	return &Service{cfg: cfg, db: db, sync: sync}
+func New(conf *config.Config, db *sql.DB, sync bool) *Service {
+	return &Service{conf: conf, db: db, sync: sync}
 }
 
 // Run executes worker loop, fetching, inserting, and sync providers data with D1.
@@ -40,54 +48,68 @@ func (s *Service) Run(ctx context.Context) {
 		slog.InfoContext(ctx, fmt.Sprintf("Worker took %s", time.Since(startAt)))
 	}()
 
-	// TODO: use gorutine
-	for _, pd := range []provider.Provider{urlhaus.New(s.cfg.UrlhausKey)} {
-		fetchAt := time.Now()
+	cl := httpc.New(s.conf.CacheDir)
+	wg := sync.WaitGroup{}
+	s.jobID = uuid.NewString()
 
-		var insertErr error
-		fetchErr := pd.Fetch(ctx, httpc.New(), func(urlData string) {
-			if err := s.insert(pd, urlData); err != nil {
-				insertErr = err
-			}
+	for _, pd := range []provider.Provider{urlhaus.New(s.conf.UrlhausKey), openphish.New(), phishtank.New(), tweetfeed.New(), phishingdb.New()} {
+		wg.Go(func() {
+			fetchAt := time.Now()
+
+			var insertErr error
+			fetchErr := pd.Fetch(ctx, cl, func(urlData string) {
+				if err := s.insert(ctx, pd, urlData); err != nil {
+					insertErr = err
+				}
+			})
+
+			s.writeFeedHistory(ctx, pd, errors.Join(fetchErr, insertErr))
+
+			slog.InfoContext(ctx, fmt.Sprintf("%s took %s", pd.Name(), time.Since(fetchAt)))
 		})
-
-		s.writeFeedHistory(ctx, pd, errors.Join(fetchErr, insertErr))
-
-		slog.InfoContext(ctx, fmt.Sprintf("%s took %s", pd.Name(), time.Since(fetchAt)))
 	}
 
-	if err := s.writeDiff(); err != nil {
+	wg.Wait()
+
+	diffCount, err := s.writeDiff()
+	if err != nil {
 		slog.ErrorContext(ctx, "Failed to write diff file", "error", err)
 		return
 	}
 
-	if err := s.d1Sync(ctx); err != nil {
-		slog.ErrorContext(ctx, "Failed to sync diff file with D1", "error", err)
+	if err := s.d1Sync(ctx, diffCount); err != nil {
+		slog.ErrorContext(ctx, "Failed to sync with D1", "error", err)
 		return
 	}
 
 	if err := s.rotate(); err != nil {
 		slog.ErrorContext(ctx, "Failed to rotate local state", "error", err)
 	}
+
+	db.Vacuum(ctx)
 }
 
 // insert url to DB
-func (s Service) insert(pd provider.Provider, urlData string) error {
-	pattern, err := normalize.Canonical(urlData)
+func (s Service) insert(ctx context.Context, pd provider.Provider, rawURL string) error {
+	pattern, err := normalize.Canonical(rawURL)
 	if err != nil {
-		slog.Error("Invalid URL", "provider", pd.Name(), "url", urlData, "error", err)
-		return err
+		slog.ErrorContext(ctx, "Invalid URL", "provider", pd.Name(), "url", rawURL, "error", err)
+		return fmt.Errorf("%s: %s", err.Error(), rawURL)
 	}
 
 	hash := normalize.Hash(pattern)
-	_, err = s.db.Exec(`
-		INSERT INTO curr (h, pId)
-		VALUES (?, ?)
-		ON CONFLICT(h) DO UPDATE SET pId = curr.pId | excluded.pId`,
-		hash[:], pd.Bit())
+
+	db.RetryQuery(ctx, func() error {
+		_, err = s.db.ExecContext(ctx, `
+			INSERT INTO curr (h, pId)
+			VALUES (?, ?)
+			ON CONFLICT(h) DO UPDATE SET pId = curr.pId | excluded.pId`,
+			hash[:], pd.Bit())
+		return err
+	})
 
 	if err != nil {
-		slog.Error("Failed to insert URL", "provider", pd.Name(), "url", urlData, "error", err)
+		slog.ErrorContext(ctx, "Failed to insert URL", "provider", pd.Name(), "url", rawURL, "error", err)
 	}
 	return err
 }
@@ -108,17 +130,18 @@ func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, las
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO feed_history (provider, pId, fetchAt, records, last_error) VALUES (?, ?, ?, ?, ?)`,
-		pd.Name(), pd.Bit(), time.Now().Format(time.RFC3339), count, errMsg)
+		INSERT INTO feed_history (jobId, provider, pId, fetchAt, records, lastError) VALUES (?, ?, ?, ?, ?, ?)`,
+		s.jobID, pd.Name(), pd.Bit(), time.Now().Format(time.RFC3339), count, errMsg)
 
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to update feed history", "provider", pd.Name(), "error", err)
 	}
 }
 
-// write difference of current list and new to Config.DataDir/diff/chunk-*.sql
-func (s Service) writeDiff() error {
-	diffPath := filepath.Join(s.cfg.DataDir, "diff")
+// write difference of current list and new to Config.DataDir/diff/chunk-*.sql.
+// Returns total diff records.
+func (s Service) writeDiff() (int, error) {
+	diffPath := filepath.Join(s.conf.DataDir, "diff")
 	os.RemoveAll(diffPath)
 	os.MkdirAll(diffPath, 0755)
 
@@ -161,7 +184,7 @@ func (s Service) writeDiff() error {
 		SELECT h, pId FROM prev`)
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer currRows.Close()
 
@@ -173,11 +196,11 @@ func (s Service) writeDiff() error {
 		var pId uint32
 
 		if err := currRows.Scan(&hash, &pId); err != nil {
-			return err
+			return 0, err
 		}
 
 		if err := writeStatement(hash, pId); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -187,7 +210,7 @@ func (s Service) writeDiff() error {
 		slog.Info(fmt.Sprintf("Diff rows %d, chunks %d", rowsDiff, chunk))
 	}
 
-	return currRows.Err()
+	return rowsDiff, currRows.Err()
 }
 
 // Rotates the local database schema by swapping current and previous tables.
@@ -219,5 +242,5 @@ func (s Service) rotate() error {
 		return err
 	}
 
-	return os.RemoveAll(filepath.Join(s.cfg.DataDir, "diff"))
+	return os.RemoveAll(filepath.Join(s.conf.DataDir, "diff"))
 }

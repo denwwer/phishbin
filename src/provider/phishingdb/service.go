@@ -1,12 +1,11 @@
-// Download Plain-Text URL List (URLs only) for past 30 days. https://urlhaus.abuse.ch/api/#plain-text
-// List gets generated every 5 minutes.
+// Used phishing-links-INACTIVE feed https://github.com/Phishing-Database/Phishing.Database.
+// File is updated regularly (that repo said).
 
-package urlhaus
+package phishingdb
 
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -14,26 +13,24 @@ import (
 	"github.com/phishbin/src/provider"
 )
 
-const dataURL = "https://urlhaus-api.abuse.ch/v2/files/exports/%s/urls_recent.txt"
+const dataURL = "https://phish.co.za/latest/phishing-links-ACTIVE.txt"
 
-type service struct {
-	authKey string
-}
+type service struct{}
 
-func New(authKey string) provider.Provider {
-	return &service{authKey: authKey}
+func New() provider.Provider {
+	return &service{}
 }
 
 func (s service) Name() string {
-	return "URLhaus"
+	return "PhishingDatabase"
 }
 
 func (s service) Bit() uint32 {
-	return 1
+	return 5
 }
 
 func (s service) Fetch(ctx context.Context, c *httpc.Client, emit func(urlData string)) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(dataURL, s.authKey), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dataURL, nil)
 	if err != nil {
 		return err
 	}

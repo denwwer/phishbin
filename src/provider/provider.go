@@ -4,9 +4,12 @@ import (
 	"context"
 	"net"
 	"net/url"
+	"regexp"
 
 	"github.com/phishbin/src/httpc"
 )
+
+var ipURLRegexp = regexp.MustCompile(`(?i)^(?:[a-z][a-z0-9+.-]*://)?(?:[^/@]*@)?((?:[0-9]{1,3}\.){3}[0-9]{1,3})(?::[0-9]+)?(?:[/ ?#]|$)`)
 
 type Provider interface {
 	Name() string
@@ -15,8 +18,13 @@ type Provider interface {
 	Fetch(ctx context.Context, c *httpc.Client, emit func(urlData string)) error
 }
 
-// Returns true if the given raw URL is an IP address, false otherwise.
+// IsIPURL returns true if the given raw URL is an IP address, false otherwise.
 func IsIPURL(rawURL string) bool {
 	u, err := url.Parse(rawURL)
-	return err == nil && net.ParseIP(u.Hostname()) != nil
+	if err == nil {
+		return net.ParseIP(u.Hostname()) != nil
+	}
+
+	m := ipURLRegexp.FindStringSubmatch(rawURL)
+	return len(m) == 2 && net.ParseIP(m[1]) != nil
 }

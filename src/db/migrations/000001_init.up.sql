@@ -13,16 +13,11 @@ CREATE TABLE curr (
 
 CREATE TABLE feed_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider TEXT,
+    jobId TEXT NOT NULL,
+    provider TEXT NOT NULL,
     pId INTEGER NOT NULL,
-    fetchAt TEXT,
+    fetchAt TEXT NOT NULL,
     records INTEGER,
-    last_error TEXT
+    lastError TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_feed_history_last_error ON feed_history(last_error);
-
-CREATE TABLE settings (
-    name TEXT PRIMARY KEY,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_feed_history_jobId_last_error ON feed_history(jobId, lastError);

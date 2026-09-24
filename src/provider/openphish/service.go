@@ -1,12 +1,11 @@
-// Download Plain-Text URL List (URLs only) for past 30 days. https://urlhaus.abuse.ch/api/#plain-text
-// List gets generated every 5 minutes.
+// Used free community feed https://openphish.com/phishing_feeds.html.
+// Update frequency 12h
 
-package urlhaus
+package openphish
 
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -14,26 +13,24 @@ import (
 	"github.com/phishbin/src/provider"
 )
 
-const dataURL = "https://urlhaus-api.abuse.ch/v2/files/exports/%s/urls_recent.txt"
+const dataURL = "https://raw.githubusercontent.com/openphish/public_feed/refs/heads/main/feed.txt"
 
-type service struct {
-	authKey string
-}
+type service struct{}
 
-func New(authKey string) provider.Provider {
-	return &service{authKey: authKey}
+func New() provider.Provider {
+	return &service{}
 }
 
 func (s service) Name() string {
-	return "URLhaus"
+	return "OpenPhish"
 }
 
 func (s service) Bit() uint32 {
-	return 1
+	return 2
 }
 
 func (s service) Fetch(ctx context.Context, c *httpc.Client, emit func(urlData string)) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(dataURL, s.authKey), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dataURL, nil)
 	if err != nil {
 		return err
 	}

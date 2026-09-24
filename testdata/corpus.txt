@@ -91,3 +91,29 @@ https://evil.com%2Fx/y
 https://ev%2569l.com/
 https://ev%25il.com/
 https://ev%zzil.com/
+
+# userinfo spoofing: the host is whatever follows the LAST '@', and '%' is legal
+# in userinfo, so the forbidden-host-byte rule must not be applied to it
+https://peichunyun.com%plcb%imbl@peichunyun.com/hlbn
+https://evil.com%2Fx@real.com/y
+https://u:p%25w@evil.com/x
+https://a%40b@evil.com/x
+https://real.com@evil.com/x
+https://real.com@1.2.3.4/x
+
+# homograph userinfo: U+2215 DIVISION SLASH fakes a path; the real host is the
+# workers.dev name after the last '@'. net/url rejects non-ASCII userinfo.
+https://fwbwqhlqgacv.com∕fwbwqhlqgacv∕x@generation-cover-8170.whdzq2qfs.workers.dev/
+https://real∕bank.com@evil.com/login
+
+# raw C0 / DEL bytes: WHATWG percent-encodes them, net/url rejects the URL
+https://evil.com/ab
+https://evil.com/ab
+https://evil.com/a%00b
+https://evil.com/x?q=ab
+
+# labels may start or end with '-' (WHATWG CheckHyphens is off)
+https://reduce-repair-.start.page/
+https://-lead.example.com/x
+https://a--b.com/x
+https://x_y.example.com/

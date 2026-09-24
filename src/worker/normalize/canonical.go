@@ -37,7 +37,10 @@ var (
 
 	// hostRegexp must match HOST_RE in canonical.ts. It requires at least two
 	// labels and a TLD starting with a letter, so numeric hosts never pass.
-	hostRegexp = regexp.MustCompile(`^(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{0,62}$`)
+	// Labels may start or end with '-': the WHATWG parser allows it (CheckHyphens
+	// is off), real hosts like "reduce-repair-.start.page" use it, and anything
+	// stricter here would drop feed entries the Worker happily canonicalizes.
+	hostRegexp = regexp.MustCompile(`^(?:[a-z0-9_-]{1,63}\.)+[a-z][a-z0-9-]{0,62}$`)
 
 	// UTS-46 non-transitional, lenient, matching the WHATWG URL parser.
 	idn = idna.New(
@@ -149,6 +152,7 @@ func preprocess(raw string) (string, bool) {
 	raw = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(raw)
 	raw = strings.ReplaceAll(raw, `\`, "/") // special schemes treat \ as /
 	raw = escapeLonePercent(raw)            // net/url rejects "%zz"; WHATWG encodes it
+	raw = escapeControl(raw)                // net/url rejects raw C0/DEL; WHATWG encodes them
 
 	m := schemeRegexp.FindStringSubmatch(raw)
 	if m == nil {
@@ -162,6 +166,29 @@ func preprocess(raw string) (string, bool) {
 	}
 
 	return decodeAuthority(raw)
+}
+
+const hexLower = "0123456789abcdef"
+
+// escapeControl percent-encodes C0 controls and DEL, which the WHATWG parser
+// encodes but net/url rejects outright ("invalid control character in URL").
+// Tab, CR and LF are already gone by the time this runs.
+func escapeControl(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c == 0x7f {
+			b.WriteByte('%')
+			b.WriteByte(hexLower[c>>4])
+			b.WriteByte(hexLower[c&15])
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // forbiddenHostBytes are the WHATWG forbidden host code points. '%' is included
@@ -178,31 +205,40 @@ func decodeAuthority(raw string) (string, bool) {
 	if m == nil {
 		return raw, true
 	}
-	start := len(m[0])
+	schemeEnd := len(m[0])
 	end := len(raw)
-	if i := strings.IndexAny(raw[start:], "/?#"); i >= 0 {
-		end = start + i
-	}
-	auth := raw[start:end]
-	if !strings.Contains(auth, "%") {
-		return raw, true
+	if i := strings.IndexAny(raw[schemeEnd:], "/?#"); i >= 0 {
+		end = schemeEnd + i
 	}
 
-	var b strings.Builder
-	b.Grow(len(auth))
-	for i := 0; i < len(auth); i++ {
-		if auth[i] == '%' && i+2 < len(auth) && isHex(auth[i+1]) && isHex(auth[i+2]) {
-			c := unhex(auth[i+1])<<4 | unhex(auth[i+2])
-			if strings.IndexByte(forbiddenHostBytes, c) >= 0 {
-				return "", false
-			}
-			b.WriteByte(c)
-			i += 2
-			continue
-		}
-		b.WriteByte(auth[i])
+	// Drop userinfo. The WHATWG parser takes the host from after the LAST '@' and
+	// percent-encodes whatever precedes it, so userinfo can hold '%', "%2F" and
+	// raw non-ASCII that net/url rejects ("invalid userinfo"). Phishing feeds are
+	// full of "real-bank.com@evil.com/login" and homograph variants of it, so
+	// parsing userinfo at all would drop exactly the entries that matter.
+	host := raw[schemeEnd:end]
+	if at := strings.LastIndexByte(host, '@'); at >= 0 {
+		host = host[at+1:]
 	}
-	return raw[:start] + b.String() + raw[end:], true
+
+	if strings.Contains(host, "%") {
+		var b strings.Builder
+		b.Grow(len(host))
+		for i := 0; i < len(host); i++ {
+			if host[i] == '%' && i+2 < len(host) && isHex(host[i+1]) && isHex(host[i+2]) {
+				c := unhex(host[i+1])<<4 | unhex(host[i+2])
+				if strings.IndexByte(forbiddenHostBytes, c) >= 0 {
+					return "", false
+				}
+				b.WriteByte(c)
+				i += 2
+				continue
+			}
+			b.WriteByte(host[i])
+		}
+		host = b.String()
+	}
+	return raw[:schemeEnd] + host + raw[end:], true
 }
 
 // escapeLonePercent replaces a '%' that does not start a valid escape with

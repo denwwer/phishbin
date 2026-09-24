@@ -11,6 +11,6 @@ require-template-schema-exists: true
 template: testify
 template-schema: '{{.Template}}.schema.json'
 packages:
-  github.com/inboxbuffer/src:
+  github.com/phishbin/src:
     config:
       all: true
