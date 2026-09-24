@@ -10,20 +10,16 @@ run:
 
 # Build for current OS
 build:
-	@go build $(BUILD_FLAGS) -o inboxbuffer main.go
-
-# Build linux binaries using Docker (will be available in build/linux)
-build-linux:
-	docker build -f tools/linux-build/Dockerfile --output . .
+	@go build $(BUILD_FLAGS) -o phishbin main.go
 
 docker:
-	docker build -t denwwer/inboxbuffer .
-	docker run --name inboxbuffer -p 1081:1081 -p 1082:1082 -p 1025:1025 -v ./data:/data denwwer/inboxbuffer
+	docker build -t denwwer/phishbin .
+	docker run --name phishbin -p 4535:4535 -v ./data:/data denwwer/phishbin
 
 # Run tests
 test:
 	@go test -race -v ./...
-	@cd worker && npm test
+	@cd client && npm test
 
 
 # Run linter

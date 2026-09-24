@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"time"
 
 	"github.com/im-kulikov/gonfig"
+	"github.com/phishbin/src/api"
 	"github.com/phishbin/src/config"
 	"github.com/phishbin/src/db"
+	_ "github.com/phishbin/src/log"
 	"github.com/phishbin/src/worker"
 )
 
@@ -27,14 +30,8 @@ func main() {
 
 	runDur, err := time.ParseDuration(conf.Time)
 	if err == nil {
-		if runDur < 0 {
-			slog.Error("Duration must be greater than zero")
-			return
-		}
-
-		// TODO: is 30 min?
-		if runDur > 0 && runDur < 30*time.Minute {
-			slog.Error("Duration must be greater than or equal to 30 minutes")
+		if err := validateRunDuration(runDur); err != nil {
+			slog.Error(err.Error())
 			return
 		}
 	}
@@ -44,20 +41,41 @@ func main() {
 		slog.Error("Failed to connect to database", "err", err)
 		return
 	}
-	defer dbClient.Close()
+	defer dbClient.Close() //nolint:errcheck
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	w := worker.New(conf, dbClient, true)
+	srv := api.Serve(ctx, conf, dbClient)
 
-	if conf.Time == "0" {
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
+
+	w := worker.New(conf, dbClient, true)
+	runSchedule(ctx, conf.Time, w)
+}
+
+func validateRunDuration(runDur time.Duration) error {
+	if runDur < 0 {
+		return errors.New("duration must be greater than zero")
+	}
+	if runDur > 0 && runDur < 30*time.Minute {
+		return errors.New("duration must be greater than or equal to 30 minutes")
+	}
+	return nil
+}
+
+func runSchedule(ctx context.Context, value string, w worker.Service) {
+	runDur, err := time.ParseDuration(value)
+	if err == nil && value == "0" {
 		slog.Warn("One-time execution")
 		w.Run(ctx)
 		return
 	}
 
-	// periodic interval
 	if err == nil {
 		slog.Info(fmt.Sprintf("Scheduled every %s", runDur))
 
@@ -74,21 +92,16 @@ func main() {
 		}
 	}
 
-	parsedTime, timeErr := time.Parse(runLayout, conf.Time)
+	parsedTime, timeErr := time.Parse(runLayout, value)
 	if timeErr != nil {
-		slog.Error("Invalid run time", "value", conf.Time, "error", timeErr)
-		fmt.Println(gonfig.UsageOfEnvs(conf))
+		slog.Error("Invalid run time", "value", value, "error", timeErr)
 		return
 	}
 
 	now := time.Now()
-	runTime := time.Date(now.Year(), now.Month(), now.Day(), parsedTime.Hour(), parsedTime.Minute(), 0, 0, now.Location())
-	if !runTime.After(now) {
-		runTime = runTime.AddDate(0, 0, 1)
-	}
+	runTime := nextRunTime(now, parsedTime.Hour(), parsedTime.Minute())
 
-	// daily schedule
-	slog.Info(fmt.Sprintf("Scheduled daily at %s", conf.Time))
+	slog.Info("Scheduled daily at " + value)
 	for {
 		timer := time.NewTimer(time.Until(runTime))
 		select {
@@ -101,4 +114,12 @@ func main() {
 		w.Run(ctx)
 		runTime = runTime.AddDate(0, 0, 1)
 	}
+}
+
+func nextRunTime(now time.Time, hour, minute int) time.Time {
+	runTime := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+	if !runTime.After(now) {
+		runTime = runTime.AddDate(0, 0, 1)
+	}
+	return runTime
 }

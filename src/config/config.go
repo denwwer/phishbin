@@ -6,6 +6,7 @@ var Version = "v0.0.0"
 // Config holds environment variable settings.
 type Config struct {
 	Time        string `env:"PB_TIME" required:"true" usage:"Scheduler time, format HH:MM e.g daily at 13:00 or periodic interval - [d]m|h|d e.g. every one hour 1h. When set to 0, one-time run."`
+	HTTPAddr    string `env:"PB_HTTP_ADDR" default:":4535" usage:"HTTP server listen address."`
 	DataDir     string `env:"PB_DATA_DIR" default:"/data" usage:"Where store SQLite database."`
 	CFDatabase  string `env:"PB_CF_DB_ID" required:"true" usage:"ID of Cloudflare D1 database to store results."`
 	CFAccountID string `env:"PB_CF_ACCOUNT_ID" required:"true" usage:"Cloudflare account ID."`

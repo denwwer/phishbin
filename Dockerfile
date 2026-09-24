@@ -17,17 +17,13 @@ RUN make build
 FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/inboxbuffer /inboxbuffer
-
-ENV IB_SERVER_HOST="0.0.0.0"
+COPY --from=builder /app/phishbin /phishbin
 
 # default ports
-EXPOSE 1081
-EXPOSE 1025
-EXPOSE 1082
+EXPOSE 4535
 
-# data and config dir
+# data dir
 VOLUME ["/data"]
 
-ENTRYPOINT ["/inboxbuffer"]
+ENTRYPOINT ["/phishbin"]
 CMD ["-c", "/data"]

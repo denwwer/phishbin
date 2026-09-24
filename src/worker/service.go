@@ -16,6 +16,7 @@ import (
 	"github.com/phishbin/src/config"
 	"github.com/phishbin/src/db"
 	"github.com/phishbin/src/httpc"
+	"github.com/phishbin/src/log"
 	"github.com/phishbin/src/provider"
 	"github.com/phishbin/src/provider/openphish"
 	"github.com/phishbin/src/provider/phishingdb"
@@ -28,19 +29,30 @@ import (
 // Max chunk size for splitting SQL diff statements into separate files.
 const maxChunkSize = 90 * 1024 // keep 90 KB
 
-type Service struct {
-	conf  *config.Config
-	db    *sql.DB
-	sync  bool // sync diff data with D1
-	jobID string
+type Service interface {
+	Run(ctx context.Context)
 }
 
-func New(conf *config.Config, db *sql.DB, sync bool) *Service {
-	return &Service{conf: conf, db: db, sync: sync}
+type service struct {
+	conf      *config.Config
+	db        *sql.DB
+	sync      bool // sync diff data with D1
+	jobID     string
+	providers []provider.Provider
+}
+
+func New(conf *config.Config, db *sql.DB, sync bool) Service {
+	return &service{
+		conf:      conf,
+		db:        db,
+		sync:      sync,
+		providers: []provider.Provider{urlhaus.New(conf.UrlhausKey), openphish.New(), phishtank.New(), tweetfeed.New(), phishingdb.New()},
+	}
 }
 
 // Run executes worker loop, fetching, inserting, and sync providers data with D1.
-func (s *Service) Run(ctx context.Context) {
+func (s *service) Run(ctx context.Context) {
+	log.ResetErrorCount()
 	slog.InfoContext(ctx, "Worker started")
 
 	startAt := time.Now()
@@ -52,7 +64,7 @@ func (s *Service) Run(ctx context.Context) {
 	wg := sync.WaitGroup{}
 	s.jobID = uuid.NewString()
 
-	for _, pd := range []provider.Provider{urlhaus.New(s.conf.UrlhausKey), openphish.New(), phishtank.New(), tweetfeed.New(), phishingdb.New()} {
+	for _, pd := range s.providers {
 		wg.Go(func() {
 			fetchAt := time.Now()
 
@@ -82,15 +94,13 @@ func (s *Service) Run(ctx context.Context) {
 		return
 	}
 
-	if err := s.rotate(); err != nil {
+	if err := s.rotate(ctx); err != nil {
 		slog.ErrorContext(ctx, "Failed to rotate local state", "error", err)
 	}
-
-	db.Vacuum(ctx)
 }
 
 // insert url to DB
-func (s Service) insert(ctx context.Context, pd provider.Provider, rawURL string) error {
+func (s service) insert(ctx context.Context, pd provider.Provider, rawURL string) error {
 	pattern, err := normalize.Canonical(rawURL)
 	if err != nil {
 		slog.ErrorContext(ctx, "Invalid URL", "provider", pd.Name(), "url", rawURL, "error", err)
@@ -115,7 +125,7 @@ func (s Service) insert(ctx context.Context, pd provider.Provider, rawURL string
 }
 
 // WriteFeedHistory save the current URL's count and last error for a provider.
-func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, lastError error) {
+func (s service) writeFeedHistory(ctx context.Context, pd provider.Provider, lastError error) {
 	var count int
 
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM curr WHERE pId & ? != 0`, pd.Bit()).Scan(&count)
@@ -140,7 +150,7 @@ func (s Service) writeFeedHistory(ctx context.Context, pd provider.Provider, las
 
 // write difference of current list and new to Config.DataDir/diff/chunk-*.sql.
 // Returns total diff records.
-func (s Service) writeDiff() (int, error) {
+func (s service) writeDiff() (int, error) {
 	diffPath := filepath.Join(s.conf.DataDir, "diff")
 	os.RemoveAll(diffPath)
 	os.MkdirAll(diffPath, 0755)
@@ -213,23 +223,24 @@ func (s Service) writeDiff() (int, error) {
 	return rowsDiff, currRows.Err()
 }
 
-// Rotates the local database schema by swapping current and previous tables.
-func (s Service) rotate() error {
+// rotate atomically SQLite database schema.
+// If sync is enabled, it removes the local diff files.
+func (s service) rotate(ctx context.Context) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DROP TABLE prev`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DROP TABLE prev`); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(`ALTER TABLE curr RENAME TO prev`); err != nil {
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE curr RENAME TO prev`); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		CREATE TABLE curr (
 			h BLOB PRIMARY KEY,
 			pId INTEGER NOT NULL,
@@ -242,5 +253,11 @@ func (s Service) rotate() error {
 		return err
 	}
 
-	return os.RemoveAll(filepath.Join(s.conf.DataDir, "diff"))
+	if s.sync {
+		return os.RemoveAll(filepath.Join(s.conf.DataDir, "diff"))
+	}
+
+	db.Vacuum(ctx)
+
+	return nil
 }

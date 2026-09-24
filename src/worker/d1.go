@@ -17,7 +17,7 @@ import (
 )
 
 // import diff-*.sql to cloudflare D1 database.
-func (s Service) d1Sync(ctx context.Context, diffCount int) error {
+func (s service) d1Sync(ctx context.Context, diffCount int) error {
 	if !s.sync {
 		slog.WarnContext(ctx, "Sync is disabled")
 		return nil
@@ -35,7 +35,7 @@ func (s Service) d1Sync(ctx context.Context, diffCount int) error {
 	sort.Strings(chunks)
 
 	startedAt := time.Now()
-	opt := []option.RequestOption{option.WithAPIToken(s.conf.CFD1Token), option.WithMaxRetries(3), option.WithRequestTimeout(30 * time.Second)}
+	opt := []option.RequestOption{option.WithAPIToken(s.conf.CFD1Token), option.WithMaxRetries(5), option.WithRequestTimeout(30 * time.Second)}
 	opt = append(opt, cloudflare.DefaultClientOptions()...)
 	client := d1.NewD1Service(opt...)
 
